@@ -7,6 +7,7 @@ module T::Props
       extend T::Sig
 
       SetterProc = T.type_alias {T.proc.params(val: T.untyped).void}
+      ValidateProc = T.type_alias {T.proc.params(prop: Symbol, value: T.untyped).void}
 
       sig do
         params(
@@ -19,41 +20,87 @@ module T::Props
       end
       def self.build_setter_proc(klass, prop, rules)
         # Our nil check works differently than a simple T.nilable for various
-        # reasons (including the `raise_on_nil_write` setting, the existence
-        # of defaults & factories, and the fact that we allow `T.nilable(Foo)`
-        # where Foo < T::Props::CustomType as a prop type even though calling
-        # `valid?` on it won't work as expected), so unwrap any T.nilable and
-        # do a check manually. (Note this hack does not fix custom types as
-        # collection elements.)
-        non_nil_type = if rules[:type_is_custom_type]
-          rules.fetch(:type)
-        else
-          T::Utils::Nilable.get_underlying_type_object(rules.fetch(:type_object))
-        end
+        # reasons (including the `raise_on_nil_write` setting and the existence
+        # of defaults & factories), so unwrap any T.nilable and do a check
+        # manually.
+        non_nil_type = T::Utils::Nilable.get_underlying_type_object(rules.fetch(:type_object))
         accessor_key = rules.fetch(:accessor_key)
-        raise_error = ->(val) {raise_pretty_error(klass, prop, non_nil_type, val)}
+        validate = rules[:setter_validate]
 
         # It seems like a bug that this affects the behavior of setters, but
         # some existing code relies on this behavior
         has_explicit_nil_default = rules.key?(:default) && rules.fetch(:default).nil?
 
+        # Use separate methods in order to ensure that we only close over necessary
+        # variables
         if !T::Props::Utils.need_nil_write_check?(rules) || has_explicit_nil_default
-          proc do |val|
-            if val.nil?
-              instance_variable_set(accessor_key, nil)
-            elsif non_nil_type.valid?(val)
-              instance_variable_set(accessor_key, val)
-            else
-              raise_error.call(val)
-            end
-          end
+          nilable_proc(prop, accessor_key, non_nil_type, klass, validate)
         else
-          proc do |val|
-            if non_nil_type.valid?(val)
-              instance_variable_set(accessor_key, val)
-            else
-              raise_error.call(val)
-            end
+          non_nil_proc(prop, accessor_key, non_nil_type, klass, validate)
+        end
+      end
+
+      sig do
+        params(
+          prop: Symbol,
+          accessor_key: Symbol,
+          non_nil_type: T::Types::Base,
+          klass: T.all(Module, T::Props::ClassMethods),
+          validate: T.nilable(ValidateProc)
+        )
+        .returns(SetterProc)
+      end
+      private_class_method def self.non_nil_proc(prop, accessor_key, non_nil_type, klass, validate)
+        proc do |val|
+          # this use of recursively_valid? is intentional: unlike for
+          # methods, we want to make sure data at the 'edge'
+          # (e.g. models that go into databases or structs serialized
+          # from disk) are correct, so we use more thorough runtime
+          # checks there
+          if non_nil_type.recursively_valid?(val)
+            validate&.call(prop, val)
+          else
+            T::Props::Private::SetterFactory.raise_pretty_error(
+              klass,
+              prop,
+              non_nil_type,
+              val,
+            )
+          end
+          instance_variable_set(accessor_key, val)
+        end
+      end
+
+      sig do
+        params(
+          prop: Symbol,
+          accessor_key: Symbol,
+          non_nil_type: T::Types::Base,
+          klass: T.all(Module, T::Props::ClassMethods),
+          validate: T.nilable(ValidateProc),
+        )
+        .returns(SetterProc)
+      end
+      private_class_method def self.nilable_proc(prop, accessor_key, non_nil_type, klass, validate)
+        proc do |val|
+          if val.nil?
+            instance_variable_set(accessor_key, nil)
+          # this use of recursively_valid? is intentional: unlike for
+          # methods, we want to make sure data at the 'edge'
+          # (e.g. models that go into databases or structs serialized
+          # from disk) are correct, so we use more thorough runtime
+          # checks there
+          elsif non_nil_type.recursively_valid?(val)
+            validate&.call(prop, val)
+            instance_variable_set(accessor_key, val)
+          else
+            T::Props::Private::SetterFactory.raise_pretty_error(
+              klass,
+              prop,
+              non_nil_type,
+              val,
+            )
+            instance_variable_set(accessor_key, val)
           end
         end
       end
@@ -67,7 +114,7 @@ module T::Props
         )
         .void
       end
-      private_class_method def self.raise_pretty_error(klass, prop, type, val)
+      def self.raise_pretty_error(klass, prop, type, val)
         base_message = "Can't set #{klass.name}.#{prop} to #{val.inspect} (instance of #{val.class}) - need a #{type}"
 
         pretty_message = "Parameter '#{prop}': #{base_message}\n"

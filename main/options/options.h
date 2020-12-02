@@ -1,6 +1,7 @@
 #ifndef RUBY_TYPER_OPTIONS_H
 #define RUBY_TYPER_OPTIONS_H
 #include "common/ConstExprStr.h"
+#include "common/EarlyReturnWithCode.h"
 #include "common/FileSystem.h"
 #include "common/common.h"
 #include "core/StrictLevel.h"
@@ -9,13 +10,6 @@
 
 namespace sorbet::realmain::options {
 
-// Terminate execution of sorbet with specific return code
-class EarlyReturnWithCode : public SorbetException {
-public:
-    EarlyReturnWithCode(int returnCode);
-    const int returnCode;
-};
-
 class PrinterConfig {
 public:
     bool enabled = false;
@@ -23,8 +17,8 @@ public:
     bool supportsFlush = false;
 
     void print(const std::string_view &contents) const;
-    template <typename... Args> void fmt(const ConstExprStr msg, const Args &... args) const {
-        print(fmt::format(msg.str, args...));
+    template <typename... Args> void fmt(const ConstExprStr msg, Args &&... args) const {
+        print(fmt::format(msg.str, std::forward<Args>(args)...));
     }
     void flush();
 
@@ -45,6 +39,7 @@ private:
 struct Printers {
     PrinterConfig ParseTree;
     PrinterConfig ParseTreeJson;
+    PrinterConfig ParseTreeJsonWithLocs;
     PrinterConfig ParseTreeWhitequark;
     PrinterConfig DesugarTree;
     PrinterConfig DesugarTreeRaw;
@@ -65,11 +60,17 @@ struct Printers {
     PrinterConfig TypedSource;
     PrinterConfig SymbolTable;
     PrinterConfig SymbolTableRaw;
+    PrinterConfig SymbolTableProto;
+    PrinterConfig SymbolTableMessagePack;
     PrinterConfig SymbolTableJson;
     PrinterConfig SymbolTableFull;
     PrinterConfig SymbolTableFullRaw;
+    PrinterConfig SymbolTableFullProto;
+    PrinterConfig SymbolTableFullMessagePack;
     PrinterConfig SymbolTableFullJson;
     PrinterConfig FileTableJson;
+    PrinterConfig FileTableProto;
+    PrinterConfig FileTableMessagePack;
     PrinterConfig MissingConstants;
     PrinterConfig PluginGeneratedCode;
     PrinterConfig Autogen;
@@ -77,6 +78,7 @@ struct Printers {
     PrinterConfig AutogenClasslist;
     PrinterConfig AutogenAutoloader;
     PrinterConfig AutogenSubclasses;
+    PrinterConfig Packager;
     // Ensure everything here is in PrinterConfig::printers().
 
     std::vector<std::reference_wrapper<PrinterConfig>> printers();
@@ -100,12 +102,16 @@ struct AutoloaderConfig {
     std::vector<std::string> modules;
     std::string rootDir;
     std::string preamble;
+    std::string registryModule;
+    std::string rootObject;
     std::vector<std::string> requireExcludes;
     std::vector<std::vector<std::string>> sameFileModules;
     std::vector<std::string> stripPrefixes;
 
     std::vector<std::string> absoluteIgnorePatterns;
     std::vector<std::string> relativeIgnorePatterns;
+
+    bool packagedAutoloader;
 };
 
 struct Options {
@@ -136,12 +142,12 @@ struct Options {
     bool autocorrect = false;
     bool waitForDebugger = false;
     bool skipRewriterPasses = false;
-    bool suggestRuntimeProfiledType = false;
     bool censorForSnapshotTests = false;
     int threads = 0;
     int logLevel = 0; // number of time -v was passed
     int autogenVersion = 0;
     bool stripeMode = false;
+    bool stripePackages = false;
     std::string typedSource = "";
     std::string cacheDir = "";
     std::vector<std::string> configatronDirs;
@@ -151,14 +157,19 @@ struct Options {
     std::vector<std::string> dslRubyExtraArgs;
     std::string storeState = "";
     bool enableCounters = false;
-    std::vector<std::string> someCounters;
     std::string errorUrlBase = "https://srb.help/";
+    bool ruby3KeywordArgs = false;
     std::set<int> errorCodeWhiteList;
     std::set<int> errorCodeBlackList;
     /** Prefix to remove from all printed paths. */
     std::string pathPrefix;
 
-    u4 reserveMemKiB = 0;
+    u4 reserveClassTableCapacity = 0;
+    u4 reserveMethodTableCapacity = 0;
+    u4 reserveFieldTableCapacity = 0;
+    u4 reserveTypeArgumentTableCapacity = 0;
+    u4 reserveTypeMemberTableCapacity = 0;
+    u4 reserveNameTableCapacity = 0;
 
     std::string statsdHost;
     std::string statsdPrefix = "ruby_typer.unknown";
@@ -169,6 +180,7 @@ struct Options {
     std::string metricsPrefix = "ruby_typer.unknown.";
     std::string metricsBranch = "none";
     std::string metricsSha = "none";
+    std::map<std::string, std::string> metricsExtraTags; // be super careful with cardinality here
 
     // Contains the allowed extensions Sorbet can parse.
     UnorderedSet<std::string> allowedExtensions;
@@ -194,10 +206,11 @@ struct Options {
     // Enable stable-but-not-yet-shipped features suitable for late-stage beta-testing.
     bool lspAllBetaFeaturesEnabled = false;
     // Booleans enabling various experimental LSP features. Each will be removed once corresponding feature stabilizes.
-    bool lspQuickFixEnabled = false;
     bool lspDocumentHighlightEnabled = false;
     bool lspDocumentSymbolEnabled = false;
+    bool lspDocumentFormatRubyfmtEnabled = false;
     bool lspSignatureHelpEnabled = false;
+    bool lspRenameEnabled = false;
 
     std::string inlineInput; // passed via -e
     std::string debugLogFile;

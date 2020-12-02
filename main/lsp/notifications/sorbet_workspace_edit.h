@@ -5,19 +5,20 @@
 #include "main/lsp/LSPTask.h"
 
 namespace sorbet::realmain::lsp {
+class LSPFileUpdates;
+class SorbetWorkspaceEditParams;
 class SorbetWorkspaceEditTask final : public LSPDangerousTypecheckerTask {
     std::unique_ptr<LSPFileUpdates> updates;
     absl::Notification startedNotification;
     std::unique_ptr<Timer> latencyCancelSlowPath;
     std::unique_ptr<SorbetWorkspaceEditParams> params;
-    // Caches the file hashes computed for `canPreempt` to avoid recomputing them later.
-    mutable std::vector<core::FileHash> cachedFileHashesOrEmpty;
-    // Caches the fast path decision made with cachedFileHashesOrEmpty.
-    // Is only valid if `cachedFileHashesOrEmpty` is not empty.
+    // Caches the fast path decision for the provided update. Becomes invalidated when the update changes.
+    mutable bool cachedFastPathDecisionValid = false;
     mutable bool cachedFastPathDecision = false;
 
 public:
     SorbetWorkspaceEditTask(const LSPConfiguration &config, std::unique_ptr<SorbetWorkspaceEditParams> params);
+    ~SorbetWorkspaceEditTask();
 
     LSPTask::Phase finalPhase() const override;
 
@@ -25,6 +26,7 @@ public:
     const SorbetWorkspaceEditParams &getParams() const;
 
     void mergeNewer(SorbetWorkspaceEditTask &task);
+    void preprocess(LSPPreprocessor &preprocess) override;
     void index(LSPIndexer &indexer) override;
     void run(LSPTypecheckerDelegate &typechecker) override;
     void runSpecial(LSPTypechecker &typechecker, WorkerPool &workers) override;

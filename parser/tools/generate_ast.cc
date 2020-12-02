@@ -13,6 +13,7 @@ enum class FieldType {
     String,
     Uint,
     Loc,
+    Bool,
 };
 
 struct FieldDef {
@@ -262,7 +263,7 @@ NodeDef nodes[] = {
     {
         "Hash",
         "hash",
-        vector<FieldDef>({{"pairs", FieldType::NodeVec}}),
+        vector<FieldDef>({{"kwargs", FieldType::Bool}, {"pairs", FieldType::NodeVec}}),
     },
     // Bareword identifier (foo); should only exist transiently while parsing
     {
@@ -309,6 +310,12 @@ NodeDef nodes[] = {
         "Kwarg",
         "kwarg",
         vector<FieldDef>({{"name", FieldType::Name}}),
+    },
+    // Keyword nil argument
+    {
+        "Kwnilarg",
+        "kwnilarg",
+        vector<FieldDef>(),
     },
     // explicit `begin` keyword.
     // `kwbegin` is emitted _only_ for post-while and post-until loops
@@ -398,6 +405,18 @@ NodeDef nodes[] = {
         "NthRef",
         "nth_ref",
         vector<FieldDef>({{"ref", FieldType::Uint}}),
+    },
+    // numbered parameters
+    {
+        "NumParams",
+        "numparams",
+        vector<FieldDef>({{"decls", FieldType::NodeVec}}),
+    },
+    // a block with numbered parameters
+    {
+        "NumBlock",
+        "numblock",
+        vector<FieldDef>({{"send", FieldType::Node}, {"args", FieldType::Node}, {"body", FieldType::Node}}),
     },
     // foo += 6 for += and other ops
     {
@@ -621,7 +640,9 @@ string fieldType(FieldType arg) {
         case FieldType::Uint:
             return "u4";
         case FieldType::Loc:
-            return "core::Loc";
+            return "core::LocOffsets";
+        case FieldType::Bool:
+            return "bool";
     }
 }
 
@@ -630,7 +651,7 @@ void emitNodeHeader(ostream &out, NodeDef &node) {
     out << "public:" << '\n';
 
     // generate constructor
-    out << "    " << node.name << "(core::Loc loc";
+    out << "    " << node.name << "(core::LocOffsets loc";
     for (auto &arg : node.fields) {
         out << ", " << fieldType(arg.type) << " " << arg.name;
     }
@@ -660,6 +681,8 @@ void emitNodeHeader(ostream &out, NodeDef &node) {
     out << '\n';
     out << "  virtual std::string toStringWithTabs(const core::GlobalState &gs, int tabs = 0) const;" << '\n';
     out << "  virtual std::string toJSON(const core::GlobalState &gs, int tabs = 0);" << '\n';
+    out << "  virtual std::string toJSONWithLocs(const core::GlobalState &gs, core::FileRef file, int tabs = 0);"
+        << '\n';
     out << "  virtual std::string toWhitequark(const core::GlobalState &gs, int tabs = 0);" << '\n';
     out << "  virtual std::string nodeName();" << '\n';
 
@@ -709,6 +732,9 @@ void emitNodeClassfile(ostream &out, NodeDef &node) {
                 // Placate the compiler; we skip these
                 abort();
                 break;
+            case FieldType::Bool:
+                out << "    fmt::format_to(buf, \"" << arg.name << " = {}\\n\", " << arg.name << ");\n";
+                break;
         }
     }
     out << "    printTabs(buf, tabs);\n";
@@ -718,6 +744,8 @@ void emitNodeClassfile(ostream &out, NodeDef &node) {
     out << '\n';
 
     // toJSON
+    // TODO: This function would be faster and safer if we used rapidjson or proto to build the JSON.
+    // (See tracing.cc and/or any of the proto stuff)
     out << "  std::string " << node.name << "::toJSON(const core::GlobalState &gs, int tabs) {" << '\n'
         << "    fmt::memory_buffer buf;" << '\n';
     out << "    fmt::format_to(buf,  \"{{\\n\");\n";
@@ -778,6 +806,78 @@ void emitNodeClassfile(ostream &out, NodeDef &node) {
             case FieldType::Loc:
                 // quiet the compiler; we skip Loc fields above
                 abort();
+            case FieldType::Bool:
+                out << "    fmt::format_to(buf, \"" << arg.name << " = {}\\n\", " << arg.name << ");\n";
+                break;
+        }
+    }
+    out << "    printTabs(buf, tabs);" << '\n';
+    out << "    fmt::format_to(buf,  \"}}\");\n";
+    out << "    return to_string(buf);\n";
+    out << "  }" << '\n';
+    out << '\n';
+
+    // toJSONWithLocs
+    out << "  std::string " << node.name
+        << "::toJSONWithLocs(const core::GlobalState &gs, core::FileRef file, int tabs) {" << '\n'
+        << "    fmt::memory_buffer buf;" << '\n';
+    out << "    fmt::format_to(buf,  \"{{\\n\");\n";
+    out << "    printTabs(buf, tabs + 1);" << '\n';
+    maybeComma = "";
+    if (!node.fields.empty()) {
+        maybeComma = ",";
+    }
+    out << R"(    fmt::format_to(buf,  "\"type\" : \")" << node.name << "\\\"" << maybeComma << "\\n\");\n";
+    i = -1;
+    // Generate fields
+    for (auto &arg : node.fields) {
+        i++;
+        maybeComma = "";
+        if (i < node.fields.size() - 1) {
+            maybeComma = ",";
+        }
+        out << "    printTabs(buf, tabs + 1);" << '\n';
+        switch (arg.type) {
+            case FieldType::Name:
+                out << "    fmt::format_to(buf,  \"\\\"" << arg.name << "\\\" : \\\"{}\\\"" << maybeComma
+                    << "\\n\", JSON::escape(" << arg.name << ".data(gs)->show(gs)));\n";
+                break;
+            case FieldType::Node:
+                out << "    fmt::format_to(buf,  \"\\\"" << arg.name << "\\\" : \");\n";
+                out << "    printNodeJSONWithLocs(buf, " << arg.name << ", gs, file, tabs + 1);\n";
+                out << "    fmt::format_to(buf,  \"" << maybeComma << "\\n\");\n";
+                break;
+            case FieldType::NodeVec:
+                out << "    fmt::format_to(buf,  \"\\\"" << arg.name << "\\\" : [\\n\");\n";
+                out << "    int i = -1;" << '\n';
+                out << "    for (auto &&a: " << arg.name << ") { \n";
+                out << "      i++;\n";
+                out << "      printTabs(buf, tabs + 2);\n";
+                out << "      printNodeJSONWithLocs(buf, a, gs, file, tabs + 2);\n";
+                out << "      if (i + 1 < " << arg.name << ".size()) {\n";
+                out << "        fmt::format_to(buf,  \",\");" << '\n';
+                out << "      }" << '\n';
+                out << "      fmt::format_to(buf,  \"\\n\");\n";
+                out << "    }" << '\n';
+                out << "    printTabs(buf, tabs + 1);\n";
+                out << "    fmt::format_to(buf,  \"]" << maybeComma << "\\n\")\n;";
+                break;
+            case FieldType::String:
+                out << "    fmt::format_to(buf,  \"\\\"" << arg.name << "\\\" : \\\"{}\\\"" << maybeComma << "\\n\", "
+                    << arg.name << ");\n";
+                break;
+            case FieldType::Uint:
+                out << R"(    fmt::format_to(buf,  "\")" << arg.name << R"(\" : \"{}\")" << maybeComma << "\\n\", "
+                    << arg.name << ");\n";
+                break;
+            case FieldType::Loc:
+                out << "      bool showFull = true;";
+                out << R"(    fmt::format_to(buf,  "\"loc\" : \"{}\")" << maybeComma << "\\n\", "
+                    << "core::Loc(file, " << arg.name << ").filePosToString(gs, showFull));\n";
+                break;
+            case FieldType::Bool:
+                out << R"(    fmt::format_to(buf,  "\")" << arg.name << R"(\" : \"{}\")" << maybeComma << "\\n\", "
+                    << arg.name << ");\n";
                 break;
         }
     }
@@ -830,6 +930,8 @@ void emitNodeClassfile(ostream &out, NodeDef &node) {
                 out << "    fmt::format_to(buf, \", {}\", " << arg.name << ");\n";
                 break;
             case FieldType::Loc:
+                continue;
+            case FieldType::Bool:
                 continue;
         }
     }

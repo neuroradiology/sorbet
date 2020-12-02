@@ -22,6 +22,7 @@ end
 
 class SomeODM
     extend T::Sig
+    include T::Props
 
     prop :foo, String
 
@@ -35,48 +36,56 @@ class ForeignClass
 end
 
 class AdvancedODM
+    include T::Props
     prop :default, String, default: ""
     prop :t_nilable, T.nilable(String)
 
-    prop :type, type: String
-    prop :object
     prop :array, Array
-    prop :array_of, array: String
-    prop :array_of_explicit, Array, array: String
     prop :t_array, T::Array[String]
     prop :hash_of, T::Hash[Symbol, String]
 
     prop :const_explicit, String, immutable: true
     const :const, String
 
-    prop :no_class_arg, type: Array, immutable: true, array: String
+    prop :enum_prop, String, enum: ["hello", "goodbye"]
 
-    prop :enum_prop, enum: ["hello", "goodbye"]
-
-    prop :foreign, String, foreign: ForeignClass
+    prop :foreign, String, foreign: ForeignClass # error: must be a lambda
     prop :foreign_lazy, String, foreign: -> {ForeignClass}
     prop :foreign_proc, String, foreign: proc {ForeignClass}
     prop :foreign_invalid, String, foreign: proc { :not_a_type }
 
     prop :ifunset, String, ifunset: ''
     prop :ifunset_nilable, T.nilable(String), ifunset: ''
+
+    prop :empty_hash_rules, String, {}
+    prop :hash_rules, String, { enum: ["hello", "goodbye" ] }
 end
 
 class PropHelpers
+  include T::Props
+  def self.token_prop(opts={}); end
+  def self.created_prop(opts={}); end
   token_prop
   created_prop
 end
 
 class PropHelpers2
+  include T::Props
+  def self.timestamped_token_prop(opts={}); end
+  def self.created_prop(opts={}); end
   timestamped_token_prop
   created_prop(immutable: true)
 end
 
 class ShardingProp
+  include T::Props
+  def self.merchant_prop(opts={}); end
   merchant_prop
 end
 
 class EncryptedProp
+  include T::Props
+  def self.encrypted_prop(opts={}); end
   encrypted_prop :foo
   encrypted_prop :bar, migrating: true, immutable: true
 end
@@ -90,11 +99,6 @@ def main
     T.reveal_type(AdvancedODM.new.default) # error: Revealed type: `String`
     T.reveal_type(AdvancedODM.new.t_nilable) # error: Revealed type: `T.nilable(String)`
 
-    T.reveal_type(AdvancedODM.new.type) # error: Revealed type: `String`
-    T.reveal_type(AdvancedODM.new.object) # error: Revealed type: `Object`
-    T.reveal_type(AdvancedODM.new.array) # error: Revealed type: `T::Array[T.untyped]`
-    T.reveal_type(AdvancedODM.new.array_of) # error: Revealed type: `T::Array[String]`
-    T.reveal_type(AdvancedODM.new.array_of_explicit) # error: Revealed type: `T::Array[T.untyped]`
     T.reveal_type(AdvancedODM.new.t_array) # error: Revealed type: `T::Array[String]`
     T.reveal_type(AdvancedODM.new.hash_of) # error: Revealed type: `T::Hash[Symbol, String]`
 
@@ -103,11 +107,8 @@ def main
     T.reveal_type(AdvancedODM.new.const) # error: Revealed type: `String`
     AdvancedODM.new.const = 'b' # error: Method `const=` does not exist on `AdvancedODM`
 
-    T.reveal_type(AdvancedODM.new.no_class_arg) # error: Revealed type: `T::Array[T.untyped]`
-    AdvancedODM.new.no_class_arg = ['b'] # error: Method `no_class_arg=` does not exist on `AdvancedODM`
-
-    T.reveal_type(AdvancedODM.new.enum_prop) # error: Revealed type: `T.untyped`
-    AdvancedODM.new.enum_prop = "hello" # error: Method `enum_prop=` does not exist
+    T.reveal_type(AdvancedODM.new.enum_prop) # error: Revealed type: `String`
+    AdvancedODM.new.enum_prop = "hello"
 
     T.reveal_type(AdvancedODM.new.foreign_) # error: Revealed type: `T.nilable(ForeignClass)`
     T.reveal_type(AdvancedODM.new.foreign_!) # error: Revealed type: `ForeignClass`

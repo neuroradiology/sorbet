@@ -5,8 +5,8 @@
 
 namespace sorbet::rewriter {
 
-std::unique_ptr<ast::Expression> SelfNew::run(core::MutableContext ctx, ast::Send *send) {
-    if (send->fun != core::Names::new_() || !send->recv->isSelfReference()) {
+ast::TreePtr SelfNew::run(core::MutableContext ctx, ast::Send *send) {
+    if (send->fun != core::Names::new_() || !send->recv.isSelfReference()) {
         return nullptr;
     }
 
@@ -18,7 +18,8 @@ std::unique_ptr<ast::Expression> SelfNew::run(core::MutableContext ctx, ast::Sen
         args.emplace_back(std::move(arg));
     }
 
-    return ast::MK::SelfNew(send->loc, std::move(args), send->flags, std::move(send->block));
+    auto numPosArgs = send->numPosArgs + 1;
+    return ast::MK::SelfNew(send->loc, numPosArgs, std::move(args), send->flags, std::move(send->block));
 }
 
 } // namespace sorbet::rewriter

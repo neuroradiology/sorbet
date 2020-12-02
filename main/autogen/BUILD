@@ -3,11 +3,13 @@ cc_library(
     srcs = [
         "autogen.cc",
         "autoloader.cc",
+        "packages.cc",
         "subclasses.cc",
     ],
     hdrs = [
         "autogen.h",
         "autoloader.h",
+        "packages.h",
         "subclasses.h",
     ],
     linkstatic = select({
@@ -19,8 +21,8 @@ cc_library(
         "//ast",
         "//ast/treemap",
         "//core",
+        "//main/autogen/data",
         "//main/options",
         "@com_github_d_bahr_crcpp",
-        "@com_github_msgpack_msgpack",
     ],
 )

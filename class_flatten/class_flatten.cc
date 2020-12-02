@@ -11,19 +11,19 @@ using namespace std;
 
 namespace sorbet::class_flatten {
 
-bool shouldExtract(core::Context ctx, const unique_ptr<ast::Expression> &what) {
-    if (ast::isa_tree<ast::MethodDef>(what.get())) {
+bool shouldExtract(core::Context ctx, const ast::TreePtr &what) {
+    if (ast::isa_tree<ast::MethodDef>(what)) {
         return false;
     }
-    if (ast::isa_tree<ast::ClassDef>(what.get())) {
+    if (ast::isa_tree<ast::ClassDef>(what)) {
         return false;
     }
-    if (ast::isa_tree<ast::EmptyTree>(what.get())) {
+    if (ast::isa_tree<ast::EmptyTree>(what)) {
         return false;
     }
 
-    if (auto asgn = ast::cast_tree<ast::Assign>(what.get())) {
-        return !ast::isa_tree<ast::UnresolvedConstantLit>(asgn->lhs.get());
+    if (auto *asgn = ast::cast_tree<ast::Assign>(what)) {
+        return !ast::isa_tree<ast::UnresolvedConstantLit>(asgn->lhs);
     }
 
     return true;
@@ -32,7 +32,7 @@ bool shouldExtract(core::Context ctx, const unique_ptr<ast::Expression> &what) {
 // pull all the non-definitions (i.e. anything that's not a method definition, a class definition, or a constant
 // defintion) from a class or file into their own instruction sequence (or, if there is only one, simply move it out of
 // the class body and return it.)
-unique_ptr<ast::Expression> extractClassInit(core::Context ctx, unique_ptr<ast::ClassDef> &klass) {
+ast::TreePtr extractClassInit(core::Context ctx, ast::ClassDef *klass) {
     ast::InsSeq::STATS_store inits;
 
     for (auto it = klass->rhs.begin(); it != klass->rhs.end(); /* nothing */) {
@@ -61,14 +61,24 @@ public:
         ENFORCE(classStack.empty());
     }
 
-    unique_ptr<ast::ClassDef> preTransformClassDef(core::Context ctx, unique_ptr<ast::ClassDef> classDef) {
+    ast::TreePtr preTransformClassDef(core::Context ctx, ast::TreePtr tree) {
         classStack.emplace_back(classes.size());
         classes.emplace_back();
 
+        return tree;
+    }
+
+    ast::TreePtr postTransformClassDef(core::Context ctx, ast::TreePtr tree) {
+        ENFORCE(!classStack.empty());
+        ENFORCE(classes.size() > classStack.back());
+        ENFORCE(classes[classStack.back()] == nullptr);
+
+        auto *classDef = ast::cast_tree<ast::ClassDef>(tree);
         auto inits = extractClassInit(ctx, classDef);
 
         core::SymbolRef sym;
-        auto loc = classDef->declLoc;
+        auto loc = core::Loc(ctx.file, classDef->declLoc);
+        ast::TreePtr replacement;
         if (classDef->symbol == core::Symbols::root()) {
             // Every file may have its own top-level code, so uniqify the names.
             //
@@ -76,8 +86,15 @@ public:
             // every class, since Ruby allows reopening classes. However, since
             // pay-server bans that behavior, this should be OK here.
             sym = ctx.state.lookupStaticInitForFile(loc);
+
+            // Skip emitting a place-holder for the root object.
+            replacement = ast::MK::EmptyTree();
         } else {
             sym = ctx.state.lookupStaticInitForClass(classDef->symbol);
+
+            // Replace the class definition with a call to <Magic>.<define-top-class-or-module> to make its definition
+            // available to the containing static-init
+            replacement = ast::MK::DefineTopClassOrModule(classDef->declLoc, classDef->symbol);
         }
         ENFORCE(!sym.data(ctx)->arguments().empty(), "<static-init> method should already have a block arg symbol: {}",
                 sym.data(ctx)->show(ctx));
@@ -87,47 +104,40 @@ public:
         // Synthesize a block argument for this <static-init> block. This is rather fiddly,
         // because we have to know exactly what invariants desugar and namer set up about
         // methods and block arguments before us.
-        auto blkLoc = core::Loc::none(loc.file());
+        auto blkLoc = core::LocOffsets::none();
         core::LocalVariable blkLocalVar(core::Names::blkArg(), 0);
         ast::MethodDef::ARGS_store args;
-        args.emplace_back(make_unique<ast::Local>(blkLoc, blkLocalVar));
+        args.emplace_back(ast::make_tree<ast::Local>(blkLoc, blkLocalVar));
 
-        auto init = make_unique<ast::MethodDef>(loc, loc, sym, core::Names::staticInit(), std::move(args),
-                                                std::move(inits), ast::MethodDef::Flags());
-        init->flags.isRewriterSynthesized = false;
-        init->flags.isSelfMethod = true;
+        auto init = ast::make_tree<ast::MethodDef>(loc.offsets(), loc.offsets(), sym, core::Names::staticInit(),
+                                                   std::move(args), std::move(inits), ast::MethodDef::Flags());
+        ast::cast_tree_nonnull<ast::MethodDef>(init).flags.isRewriterSynthesized = false;
+        ast::cast_tree_nonnull<ast::MethodDef>(init).flags.isSelfMethod = true;
 
         classDef->rhs.emplace_back(std::move(init));
 
-        return classDef;
-    }
-
-    unique_ptr<ast::Expression> postTransformClassDef(core::Context ctx, unique_ptr<ast::ClassDef> classDef) {
-        ENFORCE(!classStack.empty());
-        ENFORCE(classes.size() > classStack.back());
-        ENFORCE(classes[classStack.back()] == nullptr);
-
-        classes[classStack.back()] = std::move(classDef);
+        classes[classStack.back()] = std::move(tree);
         classStack.pop_back();
-        return ast::MK::EmptyTree();
+
+        return replacement;
     };
 
-    unique_ptr<ast::Expression> addClasses(core::Context ctx, unique_ptr<ast::Expression> tree) {
+    ast::TreePtr addClasses(core::Context ctx, ast::TreePtr tree) {
         if (classes.empty()) {
             ENFORCE(sortedClasses().empty());
             return tree;
         }
-        if (classes.size() == 1 && (ast::cast_tree<ast::EmptyTree>(tree.get()) != nullptr)) {
+        if (classes.size() == 1 && ast::isa_tree<ast::EmptyTree>(tree)) {
             // It was only 1 class to begin with, put it back
             return std::move(sortedClasses()[0]);
         }
 
-        auto insSeq = ast::cast_tree<ast::InsSeq>(tree.get());
+        auto insSeq = ast::cast_tree<ast::InsSeq>(tree);
         if (insSeq == nullptr) {
             ast::InsSeq::STATS_store stats;
             auto sorted = sortedClasses();
             stats.insert(stats.begin(), make_move_iterator(sorted.begin()), make_move_iterator(sorted.end()));
-            return ast::MK::InsSeq(tree->loc, std::move(stats), std::move(tree));
+            return ast::MK::InsSeq(tree.loc(), std::move(stats), std::move(tree));
         }
 
         for (auto &clas : sortedClasses()) {
@@ -138,7 +148,7 @@ public:
     }
 
 private:
-    vector<unique_ptr<ast::ClassDef>> sortedClasses() {
+    vector<ast::TreePtr> sortedClasses() {
         ENFORCE(classStack.empty());
         auto ret = std::move(classes);
         classes.clear();
@@ -154,7 +164,7 @@ private:
     // would result in an "bottom-up" ordering, so instead we store a stack of
     // "where does the next definition belong" into `classStack`
     // which we push onto in the `preTransform* hook, and pop from in the `postTransform` hook.
-    vector<unique_ptr<ast::ClassDef>> classes;
+    vector<ast::TreePtr> classes;
     vector<int> classStack;
 };
 

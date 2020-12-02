@@ -72,7 +72,7 @@ module T::Private::Methods
       decl.params = {}
     end
 
-    T::Types::Proc.new(decl.params, decl.returns) # rubocop:disable PrisonGuard/UseOpusTypesShortcut
+    T::Types::Proc.new(decl.params, decl.returns)
   end
 
   # See docs at T::Utils.register_forwarder.
@@ -142,7 +142,10 @@ module T::Private::Methods
         # method_to_key(ancestor.instance_method(method_name)) is not (just) an optimization, but also required for
         # correctness, since ancestor.method_defined?(method_name) may return true even if method_name is not defined
         # directly on ancestor but instead an ancestor of ancestor.
-        if ancestor.method_defined?(method_name) && final_method?(method_owner_and_name_to_key(ancestor, method_name))
+        if (ancestor.method_defined?(method_name) ||
+            ancestor.private_method_defined?(method_name) ||
+            ancestor.protected_method_defined?(method_name)) &&
+           final_method?(method_owner_and_name_to_key(ancestor, method_name))
           raise(
             "The method `#{method_name}` on #{ancestor} was declared as final and cannot be " +
             (target == ancestor ? "redefined" : "overridden in #{target}")
@@ -190,7 +193,7 @@ module T::Private::Methods
 
     if method_name == :method_added || method_name == :singleton_method_added
       raise(
-        "Putting a `sig` on `#{method_name}` is not supported" +
+        "Putting a `sig` on `#{method_name}` is not supported" \
         " (sorbet-runtime uses this method internally to perform `sig` validation logic)"
       )
     end
@@ -206,22 +209,12 @@ module T::Private::Methods
     # (or unwrap back to the original method).
     new_method = nil
     T::Private::ClassUtils.replace_method(mod, method_name) do |*args, &blk|
-      if !T::Private::Methods.has_sig_block_for_method(new_method)
-        # This should only happen if the user used alias_method to grab a handle
-        # to the original pre-unwound `sig` method. I guess we'll just proxy the
-        # call forever since we don't know who is holding onto this handle to
-        # replace it.
-        new_new_method = mod.instance_method(method_name)
-        if new_method == new_new_method
-          raise "`sig` not present for method `#{method_name}` but you're trying to run it anyways. " \
-          "This should only be executed if you used `alias_method` to grab a handle to a method after `sig`ing it, but that clearly isn't what you are doing. " \
-          "Maybe look to see if an exception was thrown in your `sig` lambda or somehow else your `sig` wasn't actually applied to the method. " \
-          "Contact #dev-productivity if you're really stuck."
-        end
-        return new_new_method.bind(self).call(*args, &blk)
-      end
-
-      method_sig = T::Private::Methods.run_sig_block_for_method(new_method)
+      method_sig = T::Private::Methods.maybe_run_sig_block_for_method(new_method)
+      method_sig ||= T::Private::Methods._handle_missing_method_signature(
+        self,
+        original_method,
+        __callee__,
+      )
 
       # Should be the same logic as CallValidation.wrap_method_if_needed but we
       # don't want that extra layer of indirection in the callstack
@@ -252,6 +245,43 @@ module T::Private::Methods
     end
   end
 
+  def self._handle_missing_method_signature(receiver, original_method, callee)
+    method_sig = T::Private::Methods.signature_for_method(original_method)
+    if !method_sig
+      raise "`sig` not present for method `#{callee}` on #{receiver.inspect} but you're trying to run it anyways. " \
+        "This should only be executed if you used `alias_method` to grab a handle to a method after `sig`ing it, but that clearly isn't what you are doing. " \
+        "Maybe look to see if an exception was thrown in your `sig` lambda or somehow else your `sig` wasn't actually applied to the method."
+    end
+
+    if receiver.class <= original_method.owner
+      receiving_class = receiver.class
+    elsif receiver.singleton_class <= original_method.owner
+      receiving_class = receiver.singleton_class
+    elsif receiver.is_a?(Module) && receiver <= original_method.owner
+      receiving_class = receiver
+    else
+      raise "#{receiver} is not related to #{original_method} - how did we get here?"
+    end
+
+    # Check for a case where `alias` or `alias_method` was called for a
+    # method which had already had a `sig` applied. In that case, we want
+    # to avoid hitting this slow path again, by moving to a faster validator
+    # just like we did or will for the original method.
+    #
+    # If this isn't an `alias` or `alias_method` case, we're probably in the
+    # middle of some metaprogramming using a Method object, e.g. a pattern like
+    # `arr.map(&method(:foo))`. There's nothing really we can do to optimize
+    # that here.
+    receiving_method = receiving_class.instance_method(callee)
+    if receiving_method != original_method && receiving_method.original_name == original_method.name
+      aliasing_mod = receiving_method.owner
+      method_sig = method_sig.as_alias(callee)
+      unwrap_method(aliasing_mod, method_sig, original_method)
+    end
+
+    method_sig
+  end
+
   # Executes the `sig` block, and converts the resulting Declaration
   # to a Signature.
   def self.run_sig(hook_mod, method_name, original_method, declaration_block)
@@ -270,7 +300,7 @@ module T::Private::Methods
         Signature.new_untyped(method: original_method)
       end
 
-    unwrap_method(hook_mod, signature, original_method)
+    unwrap_method(signature.method.owner, signature, original_method)
     signature
   end
 
@@ -284,8 +314,12 @@ module T::Private::Methods
 
   def self.build_sig(hook_mod, method_name, original_method, current_declaration, loc)
     begin
-      # We allow `sig` in the current module's context (normal case) and inside `class << self`
-      if hook_mod != current_declaration.mod && hook_mod.singleton_class != current_declaration.mod
+      # We allow `sig` in the current module's context (normal case) and
+      if hook_mod != current_declaration.mod &&
+         # inside `class << self`, and
+         hook_mod.singleton_class != current_declaration.mod &&
+         # on `self` at the top level of a file
+         current_declaration.mod != TOP_SELF
         raise "A method (#{method_name}) is being added on a different class/module (#{hook_mod}) than the " \
               "last call to `sig` (#{current_declaration.mod}). Make sure each call " \
               "to `sig` is immediately followed by a method definition on the same " \
@@ -322,8 +356,8 @@ module T::Private::Methods
     end
   end
 
-  def self.unwrap_method(hook_mod, signature, original_method)
-    maybe_wrapped_method = CallValidation.wrap_method_if_needed(signature.method.owner, signature, original_method)
+  def self.unwrap_method(mod, signature, original_method)
+    maybe_wrapped_method = CallValidation.wrap_method_if_needed(mod, signature, original_method)
     @signatures_by_method[method_to_key(maybe_wrapped_method)] = signature
   end
 
@@ -376,7 +410,7 @@ module T::Private::Methods
   def self.run_all_sig_blocks
     loop do
       break if @sig_wrappers.empty?
-      key, _ = @sig_wrappers.first
+      key, = @sig_wrappers.first
       run_sig_block_for_key(key)
     end
   end
@@ -393,7 +427,7 @@ module T::Private::Methods
   end
 
   def self.set_final_checks_on_hooks(enable)
-    is_enabled = @old_hooks != nil
+    is_enabled = !@old_hooks.nil?
     if enable == is_enabled
       return
     end
@@ -435,6 +469,20 @@ module T::Private::Methods
     return if @installed_hooks.include?(mod)
     @installed_hooks << mod
 
+    if mod == TOP_SELF
+      # self at the top-level of a file is weirdly special in Ruby
+      # The Ruby VM on startup creates an `Object.new` and stashes it.
+      # Unlike when we're using sig inside a module, `self` is actually a
+      # normal object, not an instance of Module.
+      #
+      # Thus we can't ask things like mod.singleton_class? (since that's
+      # defined only on Module, not on Object) and even if we could, the places
+      # where we need to install the hooks are special.
+      mod.extend(SingletonMethodHooks) # def self.foo; end (at top level)
+      Object.extend(MethodHooks)       # def foo; end      (at top level)
+      return
+    end
+
     if mod.singleton_class?
       mod.include(SingletonMethodHooks)
     else
@@ -454,7 +502,12 @@ module T::Private::Methods
 
   private_class_method def self.key_to_method(key)
     id, name = key.split("#")
-    obj = ObjectSpace._id2ref(id.to_i) # rubocop:disable PrisonGuard/NoDynamicConstAccess
+    obj = ObjectSpace._id2ref(id.to_i)
     obj.instance_method(name)
   end
 end
+
+# This has to be here, and can't be nested inside `T::Private::Methods`,
+# because the value of `self` depends on lexical (nesting) scope, and we
+# specifically need a reference to the file-level self, i.e. `main:Object`
+T::Private::Methods::TOP_SELF = self

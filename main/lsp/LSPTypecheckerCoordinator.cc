@@ -1,5 +1,6 @@
 #include "main/lsp/LSPTypecheckerCoordinator.h"
 #include "absl/synchronization/notification.h"
+#include "common/concurrency/WorkerPool.h"
 #include "core/lsp/PreemptionTaskManager.h"
 #include "core/lsp/Task.h"
 #include "core/lsp/TypecheckEpochManager.h"
@@ -141,7 +142,7 @@ shared_ptr<core::lsp::Task>
 LSPTypecheckerCoordinator::trySchedulePreemption(std::unique_ptr<LSPQueuePreemptionTask> preemptTask) {
     auto wrappedTask = make_shared<TypecheckerTask>(*config, move(preemptTask),
                                                     make_unique<LSPTypecheckerDelegate>(*emptyWorkers, typechecker),
-                                                    hasDedicatedThread);
+                                                    /* collectCounters */ false);
     // Plant this timer before scheduling task to preempt, as task could run before we plant the timer!
     wrappedTask->timeLatencyUntilRun(make_unique<Timer>(*config->logger, "latency.preempt_slow_path"));
     if (hasDedicatedThread && preemptionTaskManager->trySchedulePreemptionTask(wrappedTask)) {

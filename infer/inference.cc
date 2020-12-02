@@ -80,29 +80,20 @@ unique_ptr<cfg::CFG> Inference::run(core::Context ctx, unique_ptr<cfg::CFG> cfg)
     vector<bool> visited;
     visited.resize(cfg->maxBasicBlockId);
     KnowledgeFilter knowledgeFilter(ctx, cfg);
-    if (!cfg->basicBlocks.empty()) {
-        ENFORCE(!cfg->symbol.data(ctx)->isAbstract());
-    } else {
-        ENFORCE(cfg->symbol.data(ctx)->isAbstract());
-        return cfg;
-    }
     for (auto it = cfg->forwardsTopoSort.rbegin(); it != cfg->forwardsTopoSort.rend(); ++it) {
         cfg::BasicBlock *bb = *it;
         if (bb == cfg->deadBlock()) {
             continue;
         }
         Environment &current = outEnvironments[bb->id];
-        current.vars.reserve(bb->args.size());
-        for (cfg::VariableUseSite &arg : bb->args) {
-            current.vars[arg.variable].typeAndOrigins.type = nullptr;
-        }
+        current.initializeBasicBlockArgs(*bb);
         if (bb->backEdges.size() == 1) {
             auto *parent = bb->backEdges[0];
             bool isTrueBranch = parent->bexit.thenb == bb;
             if (!outEnvironments[parent->id].isDead) {
                 Environment tempEnv(methodLoc);
                 auto &envAsSeenFromBranch =
-                    Environment::withCond(ctx, outEnvironments[parent->id], tempEnv, isTrueBranch, current.vars);
+                    Environment::withCond(ctx, outEnvironments[parent->id], tempEnv, isTrueBranch, current.vars());
                 current.populateFrom(ctx, envAsSeenFromBranch);
             } else {
                 current.isDead = true;
@@ -116,24 +107,17 @@ unique_ptr<cfg::CFG> Inference::run(core::Context ctx, unique_ptr<cfg::CFG> cfg)
                 bool isTrueBranch = parent->bexit.thenb == bb;
                 Environment tempEnv(methodLoc);
                 auto &envAsSeenFromBranch =
-                    Environment::withCond(ctx, outEnvironments[parent->id], tempEnv, isTrueBranch, current.vars);
+                    Environment::withCond(ctx, outEnvironments[parent->id], tempEnv, isTrueBranch, current.vars());
                 if (!envAsSeenFromBranch.isDead) {
                     current.isDead = false;
-                    current.mergeWith(ctx, envAsSeenFromBranch, parent->bexit.loc, *cfg.get(), bb, knowledgeFilter);
+                    current.mergeWith(ctx, envAsSeenFromBranch, core::Loc(ctx.file, parent->bexit.loc), *cfg.get(), bb,
+                                      knowledgeFilter);
                 }
             }
         }
 
         current.computePins(ctx, outEnvironments, *cfg.get(), bb);
-
-        for (auto &uninitialized : current.vars) {
-            if (uninitialized.second.typeAndOrigins.type.get() == nullptr) {
-                uninitialized.second.typeAndOrigins.type = core::Types::nilClass();
-                uninitialized.second.typeAndOrigins.origins.emplace_back(cfg->symbol.data(ctx)->loc());
-            } else {
-                uninitialized.second.typeAndOrigins.type->sanityCheck(ctx);
-            }
-        }
+        current.setUninitializedVarsToNil(ctx, cfg->symbol.data(ctx)->loc());
 
         for (auto &blockArg : bb->args) {
             current.getAndFillTypeAndOrigin(ctx, blockArg);
@@ -144,6 +128,21 @@ unique_ptr<cfg::CFG> Inference::run(core::Context ctx, unique_ptr<cfg::CFG> cfg)
             bb->firstDeadInstructionIdx = 0;
             // this block is unreachable.
             if (!bb->exprs.empty()) {
+                // This is a bit complicated:
+                //
+                //   1. If the block consists only of synthetic bindings or T.absurd, we don't
+                //      want to issue an error.
+                //   2. If the block contains a send of the form <Magic>.<nil-for-safe-navigation>(x),
+                //      we want to issue an UnnecessarySafeNavigationError, extracting
+                //      type-and-origin info from x. (This magic form is inserted by the desugarer
+                //      for a "safe navigation" operation, e.g., `x&.foo`.)
+                //   3. Otherwise, we want to issue a DeadBranchInferencer error, taking the first
+                //      (non-synthetic, non-"T.absurd") instruction in the block as the loc of the
+                //      error.
+                cfg::Instruction *unreachableInstruction = nullptr;
+                core::LocOffsets locForUnreachable;
+                bool dueToSafeNavigation = false;
+
                 for (auto &expr : bb->exprs) {
                     if (expr.value->isSynthetic) {
                         continue;
@@ -151,10 +150,38 @@ unique_ptr<cfg::CFG> Inference::run(core::Context ctx, unique_ptr<cfg::CFG> cfg)
                     if (cfg::isa_instruction<cfg::TAbsurd>(expr.value.get())) {
                         continue;
                     }
-                    if (auto e = ctx.state.beginError(expr.loc, core::errors::Infer::DeadBranchInferencer)) {
+
+                    auto send = cfg::cast_instruction<cfg::Send>(expr.value.get());
+                    if (send != nullptr && send->fun == core::Names::nilForSafeNavigation()) {
+                        unreachableInstruction = expr.value.get();
+                        locForUnreachable = expr.loc;
+                        dueToSafeNavigation = true;
+                        break;
+                    } else if (unreachableInstruction == nullptr) {
+                        unreachableInstruction = expr.value.get();
+                        locForUnreachable = expr.loc;
+                    }
+                }
+
+                if (unreachableInstruction != nullptr) {
+                    auto send = cfg::cast_instruction<cfg::Send>(unreachableInstruction);
+
+                    if (dueToSafeNavigation && send != nullptr) {
+                        if (auto e =
+                                ctx.beginError(locForUnreachable, core::errors::Infer::UnnecessarySafeNavigation)) {
+                            e.setHeader("Used `{}` operator on a receiver which can never be nil", "&.");
+
+                            // Just a failsafe check; args.size() should always be 1.
+                            if (send->args.size() > 0) {
+                                auto ty = current.getAndFillTypeAndOrigin(ctx, send->args[0]);
+                                e.addErrorSection(core::ErrorSection(
+                                    core::ErrorColors::format("Type of receiver is `{}`, from:", ty.type.show(ctx)),
+                                    ty.origins2Explanations(ctx, current.locForUninitialized())));
+                            }
+                        }
+                    } else if (auto e = ctx.beginError(locForUnreachable, core::errors::Infer::DeadBranchInferencer)) {
                         e.setHeader("This code is unreachable");
                     }
-                    break;
                 }
             }
             continue;
@@ -164,33 +191,36 @@ unique_ptr<cfg::CFG> Inference::run(core::Context ctx, unique_ptr<cfg::CFG> cfg)
         int i = 0;
         for (cfg::Binding &bind : bb->exprs) {
             i++;
-            if (!current.isDead) {
+            if (!current.isDead || !ctx.state.lspQuery.isEmpty()) {
                 current.ensureGoodAssignTarget(ctx, bind.bind.variable);
-                bind.bind.type = current.processBinding(ctx, bind, bb->outerLoops, cfg->minLoops[bind.bind.variable],
-                                                        knowledgeFilter, *constr, methodReturnType);
+                bind.bind.type =
+                    current.processBinding(ctx, *cfg, bind, bb->outerLoops, bind.bind.variable.minLoops(*cfg),
+                                           knowledgeFilter, *constr, methodReturnType);
                 if (cfg::isa_instruction<cfg::Send>(bind.value.get())) {
                     totalSendCount++;
-                    if (bind.bind.type && !bind.bind.type->isUntyped()) {
+                    if (bind.bind.type && !bind.bind.type.isUntyped()) {
                         typedSendCount++;
-                    } else if (bind.bind.type->hasUntyped()) {
-                        DEBUG_ONLY(histogramInc("untyped.sources", bind.bind.type->untypedBlame()._id););
-                        if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::UntypedValue)) {
+                    } else if (bind.bind.type.hasUntyped()) {
+                        DEBUG_ONLY(histogramInc("untyped.sources", bind.bind.type.untypedBlame().rawId()););
+                        if (auto e = ctx.beginError(bind.loc, core::errors::Infer::UntypedValue)) {
                             e.setHeader("This code is untyped");
+                            e.addErrorNote("Support for `{}` is minimal. Consider using `{}` instead.", "typed: strong",
+                                           "typed: strict");
                         }
                     }
                 }
                 ENFORCE(bind.bind.type);
-                bind.bind.type->sanityCheck(ctx);
-                if (bind.bind.type->isBottom()) {
+                bind.bind.type.sanityCheck(ctx);
+                if (bind.bind.type.isBottom()) {
                     current.isDead = true;
-                    madeBlockDead = bind.loc;
+                    madeBlockDead = core::Loc(ctx.file, bind.loc);
                 }
-                if (current.isDead) {
+                if (current.isDead && bb->firstDeadInstructionIdx == -1) {
                     // this can also be result of evaluating an instruction, e.g. an always false hard_assert
                     bb->firstDeadInstructionIdx = i;
                 }
-            } else if (current.isDead && !bind.value->isSynthetic) {
-                if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::DeadBranchInferencer)) {
+            } else if (ctx.state.lspQuery.isEmpty() && current.isDead && !bind.value->isSynthetic) {
+                if (auto e = ctx.beginError(bind.loc, core::errors::Infer::DeadBranchInferencer)) {
                     e.setHeader("This code is unreachable");
                     e.addErrorLine(madeBlockDead, "This expression always raises or can never be computed");
                 }
@@ -204,13 +234,9 @@ unique_ptr<cfg::CFG> Inference::run(core::Context ctx, unique_ptr<cfg::CFG> cfg)
         } else {
             ENFORCE(bb->firstDeadInstructionIdx != -1);
         }
-        histogramInc("infer.environment.size", current.vars.size());
-        for (auto &pair : current.vars) {
-            auto &k = pair.second.knowledge;
-            histogramInc("infer.knowledge.truthy.yes.size", k.truthy->yesTypeTests.size());
-            histogramInc("infer.knowledge.truthy.no.size", k.truthy->noTypeTests.size());
-            histogramInc("infer.knowledge.falsy.yes.size", k.falsy->yesTypeTests.size());
-            histogramInc("infer.knowledge.falsy.no.size", k.falsy->noTypeTests.size());
+        histogramInc("infer.environment.size", current.vars().size());
+        for (auto &pair : current.vars()) {
+            pair.second.knowledge.emitKnowledgeSizeMetric();
         }
     }
     if (startErrorCount == ctx.state.totalErrors()) {

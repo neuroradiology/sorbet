@@ -1,4 +1,4 @@
-# typed: strict
+# typed: true
 
 # The vast majority Most of the methods defined below are arguably private
 # APIs, but are actually not private because they're used by Chalk::ODM.
@@ -20,6 +20,7 @@ end
 module T::Props::ClassMethods
   sig {params(name: T.any(Symbol, String), cls_or_args: T.untyped, args: T::Hash[Symbol, T.untyped]).void}
   def const(name, cls_or_args, args={}, &blk); end
+  sig {params(name: T.any(Symbol, String), cls: T.untyped, rules: T.untyped).void}
   def prop(name, cls, rules = nil); end
   def decorator; end
   def decorator_class; end
@@ -34,16 +35,21 @@ module T::Props::CustomType
   def deserialize(_mongo_scalar); end
   def instance?(_value); end
   def self.scalar_type?(val); end
-  def self.valid_serialization?(val, type = nil); end
+  def self.valid_serialization?(val); end
   def serialize(_instance); end
   def valid?(value); end
   include Kernel
 end
 
+module T::Props::GeneratedCodeValidation
+  def self.validate_serialize(source); end
+  def self.validate_deserialize(source); end
+end
+
 class T::Props::Decorator
   Rules = T.type_alias {T::Hash[Symbol, T.untyped]}
   DecoratedInstance = T.type_alias {T.untyped} # Would be T::Props, but that produces circular reference errors in some circumstances
-  PropType = T.type_alias {T.any(T::Types::Base, T::Props::CustomType)}
+  PropType = T.type_alias {T::Types::Base}
   PropTypeOrClass = T.type_alias {T.any(PropType, Module)}
 end
 
@@ -56,6 +62,7 @@ class T::Props::Decorator
   def model_inherited(child); end
   def plugin(mod); end
   def prop_defined(name, cls, rules = {}); end
+  def prop_get_logic(instance, prop, value); end
   def prop_get(instance, prop, rules = {}); end
   def prop_get_if_set(instance, prop, rules = {}); end
   alias_method :get, :prop_get_if_set
@@ -137,8 +144,6 @@ end
 module T::Props::Serializable
   def deserialize(hash, strict = nil); end
   def recursive_stringify_keys(obj); end
-  def required_prop_missing_from_deserialize(prop); end
-  def required_prop_missing_from_deserialize?(prop); end
   def serialize(strict = nil); end
   def with(changed_props); end
   def with_existing_hash(changed_props, existing_hash:); end
@@ -187,3 +192,13 @@ module T::Props::TypeValidation::DecoratorMethods
   extend T::Sig
 end
 
+module T::Props::HasLazilySpecializedMethods
+  class SourceEvaluationDisabled < RuntimeError; end
+  def self.disable_lazy_evaluation!; end
+end
+
+module T::Props::GeneratedCodeValidation
+  class ValidationError < RuntimeError; end
+  def self.validate_deserialize(source); end
+  def self.validate_serialize(source); end
+end

@@ -26,28 +26,27 @@ SymbolRef MutableContext::selfClass() {
     return data->enclosingClass(this->state);
 }
 
-bool Context::permitOverloadDefinitions(FileRef sigLoc) const {
+bool Context::permitOverloadDefinitions(const core::GlobalState &gs, FileRef sigLoc, core::SymbolRef owner) {
     if (!owner.exists()) {
         return false;
     }
-    for (auto loc : owner.data(*this)->locs()) {
-        auto &file = loc.file().data(*this);
-        constexpr string_view whitelistedTest = "overloads_test.rb"sv;
-        if (((file.isPayload() || file.isStdlib()) && owner != Symbols::root() &&
-             (owner != Symbols::Object() || sigLoc.data(*this).isStdlib())) ||
-            FileOps::getFileName(file.path()) == whitelistedTest) {
+    for (auto loc : owner.data(gs)->locs()) {
+        auto &file = loc.file().data(gs);
+        if ((file.isPayload() || file.isStdlib()) && owner != Symbols::root() &&
+            (owner != Symbols::Object() || sigLoc.data(gs).isStdlib())) {
             return true;
         }
     }
-    return false;
+
+    constexpr string_view whitelistedTest = "overloads_test.rb"sv;
+    return FileOps::getFileName(sigLoc.data(gs).path()) == whitelistedTest;
 }
 
 bool MutableContext::permitOverloadDefinitions(FileRef sigLoc) const {
-    Context self(*this);
-    return self.permitOverloadDefinitions(sigLoc);
+    return Context::permitOverloadDefinitions(state, sigLoc, owner);
 }
 
-Context::Context(const MutableContext &other) noexcept : state(other.state), owner(other.owner) {}
+Context::Context(const MutableContext &other) noexcept : state(other.state), owner(other.owner), file(other.file) {}
 
 void Context::trace(string_view msg) const {
     state.trace(msg);
@@ -57,8 +56,20 @@ void MutableContext::trace(string_view msg) const {
     state.trace(msg);
 }
 
+Context Context::withFile(FileRef file) const {
+    return Context(state, owner, file);
+}
+
 Context Context::withOwner(SymbolRef sym) const {
-    return Context(state, sym);
+    return Context(state, sym, file);
+}
+
+MutableContext MutableContext::withFile(FileRef file) const {
+    return MutableContext(state, owner, file);
+}
+
+MutableContext MutableContext::withOwner(SymbolRef sym) const {
+    return MutableContext(state, sym, file);
 }
 
 GlobalSubstitution::GlobalSubstitution(const GlobalState &from, GlobalState &to,
@@ -66,9 +77,13 @@ GlobalSubstitution::GlobalSubstitution(const GlobalState &from, GlobalState &to,
     : toGlobalStateId(to.globalStateId) {
     Timer timeit(to.tracer(), "GlobalSubstitution.new", from.creation);
     ENFORCE(toGlobalStateId != 0, "toGlobalStateId is only used for sanity checks, but should always be set.");
-    ENFORCE(from.symbols.size() == to.symbols.size(), "Can't substitute symbols yet");
+    ENFORCE(from.classAndModules.size() == to.classAndModules.size(), "Can't substitute symbols yet");
+    ENFORCE(from.methods.size() == to.methods.size(), "Can't substitute symbols yet");
+    ENFORCE(from.fields.size() == to.fields.size(), "Can't substitute symbols yet");
+    ENFORCE(from.typeArguments.size() == to.typeArguments.size(), "Can't substitute symbols yet");
+    ENFORCE(from.typeMembers.size() == to.typeMembers.size(), "Can't substitute symbols yet");
 
-    const_cast<GlobalState &>(from).sanityCheck();
+    from.sanityCheck();
     {
         UnfreezeFileTable unfreezeFiles(to);
         int fileIdx = 0; // Skip file 0
@@ -88,9 +103,9 @@ GlobalSubstitution::GlobalSubstitution(const GlobalState &from, GlobalState &to,
     fastPath = false;
     if (optionalCommonParent != nullptr) {
         if (from.namesUsed() == optionalCommonParent->namesUsed() &&
-            from.symbolsUsed() == optionalCommonParent->symbolsUsed()) {
+            from.symbolsUsedTotal() == optionalCommonParent->symbolsUsedTotal()) {
             ENFORCE(to.namesUsed() >= from.namesUsed());
-            ENFORCE(to.symbolsUsed() >= from.symbolsUsed());
+            ENFORCE(to.symbolsUsedTotal() >= from.symbolsUsedTotal());
             fastPath = true;
         }
     }
@@ -128,9 +143,25 @@ GlobalSubstitution::GlobalSubstitution(const GlobalState &from, GlobalState &to,
         }
 
         // Enforce that the symbol tables are the same
-        for (int i = 0; i < from.symbols.size(); ++i) {
-            ENFORCE(substitute(from.symbols[i].name) == from.symbols[i].name);
-            ENFORCE(from.symbols[i].name == to.symbols[i].name);
+        for (int i = 0; i < from.classAndModules.size(); ++i) {
+            ENFORCE(substitute(from.classAndModules[i].name) == from.classAndModules[i].name);
+            ENFORCE(from.classAndModules[i].name == to.classAndModules[i].name);
+        }
+        for (int i = 0; i < from.methods.size(); ++i) {
+            ENFORCE(substitute(from.methods[i].name) == from.methods[i].name);
+            ENFORCE(from.methods[i].name == to.methods[i].name);
+        }
+        for (int i = 0; i < from.fields.size(); ++i) {
+            ENFORCE(substitute(from.fields[i].name) == from.fields[i].name);
+            ENFORCE(from.fields[i].name == to.fields[i].name);
+        }
+        for (int i = 0; i < from.typeArguments.size(); ++i) {
+            ENFORCE(substitute(from.typeArguments[i].name) == from.typeArguments[i].name);
+            ENFORCE(from.typeArguments[i].name == to.typeArguments[i].name);
+        }
+        for (int i = 0; i < from.typeMembers.size(); ++i) {
+            ENFORCE(substitute(from.typeMembers[i].name) == from.typeMembers[i].name);
+            ENFORCE(from.typeMembers[i].name == to.typeMembers[i].name);
         }
     }
 
@@ -145,4 +176,10 @@ bool GlobalSubstitution::useFastPath() const {
     return fastPath;
 }
 
+ErrorBuilder MutableContext::beginError(LocOffsets loc, ErrorClass what) const {
+    return state.beginError(Loc(file, loc), what);
+}
+ErrorBuilder Context::beginError(LocOffsets loc, ErrorClass what) const {
+    return state.beginError(Loc(file, loc), what);
+}
 } // namespace sorbet::core

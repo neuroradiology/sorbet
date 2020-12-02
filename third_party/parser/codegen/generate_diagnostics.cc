@@ -55,7 +55,12 @@ tuple<string, string> MESSAGES[] = {
     {"MasgnAsCondition", "multiple assignment in conditional context"},
     {"BlockGivenToYield", "block given to yield"},
     {"InvalidRegexp", "{}"},
-    {"InvalidReturn", "Invalid return in class/module body"},
+    {"InvalidReturn", "invalid return in class/module body"},
+    {"CSendInLHSOfMAsgn", "&. inside multiple assignment destination"},
+    {"CantAssignToNumparam", "cannot assign to numbered parameter {}"},
+    {"OrdinaryParamDefined", "can't use numbered params when ordinary params were also defined"},
+    {"NumparamUsedInOuterScope", "numbered parameter is already used in an outer scope"},
+    {"CircularArgumentReference", "circular argument reference {}"},
 
     // Parser warnings
     {"UselessElse", "else without rescue is useless"},
@@ -68,7 +73,7 @@ tuple<string, string> MESSAGES[] = {
     {"Clobbered", "clobbered by: {}"},
 
     // TypedRuby diagnostics
-    {"NotStaticCpathInGeninst", "Type name in generic instance must be a static constant path"},
+    {"NotStaticCpathInGeninst", "type name in generic instance must be a static constant path"},
 };
 
 void generateDclass() {

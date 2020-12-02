@@ -1,27 +1,28 @@
 #include "rewriter/Delegate.h"
 #include "ast/Helpers.h"
 #include "core/GlobalState.h"
+#include "rewriter/Util.h"
 #include <optional>
 
 using namespace std;
 
 namespace sorbet::rewriter {
 
-static bool literalSymbolEqual(const core::GlobalState &gs, ast::Expression *node, core::NameRef name) {
+static bool literalSymbolEqual(const core::GlobalState &gs, const ast::TreePtr &node, core::NameRef name) {
     if (auto lit = ast::cast_tree<ast::Literal>(node)) {
         return lit->isSymbol(gs) && lit->asSymbol(gs) == name;
     }
     return false;
 }
 
-static bool isLiteralTrue(const core::GlobalState &gs, ast::Expression *node) {
+static bool isLiteralTrue(const core::GlobalState &gs, const ast::TreePtr &node) {
     if (auto lit = ast::cast_tree<ast::Literal>(node)) {
         return lit->isTrue(gs);
     }
     return false;
 }
 
-static optional<core::NameRef> stringOrSymbolNameRef(const core::GlobalState &gs, ast::Expression *node) {
+static optional<core::NameRef> stringOrSymbolNameRef(const core::GlobalState &gs, const ast::TreePtr &node) {
     auto lit = ast::cast_tree<ast::Literal>(node);
     if (!lit) {
         return nullopt;
@@ -35,8 +36,8 @@ static optional<core::NameRef> stringOrSymbolNameRef(const core::GlobalState &gs
     }
 }
 
-vector<unique_ptr<ast::Expression>> Delegate::run(core::MutableContext ctx, const ast::Send *send) {
-    vector<unique_ptr<ast::Expression>> empty;
+vector<ast::TreePtr> Delegate::run(core::MutableContext ctx, const ast::Send *send) {
+    vector<ast::TreePtr> empty;
     auto loc = send->loc;
 
     if (send->fun != core::Names::delegate()) {
@@ -47,26 +48,27 @@ vector<unique_ptr<ast::Expression>> Delegate::run(core::MutableContext ctx, cons
         return empty;
     }
 
-    auto options = ast::cast_tree<ast::Hash>(send->args.back().get());
+    auto optionsTree = ASTUtil::mkKwArgsHash(send);
+    auto options = ast::cast_tree<ast::Hash>(optionsTree);
     if (!options) {
         return empty;
     }
 
-    if (send->args.size() == 1) {
+    if (send->numPosArgs == 0) {
         // there has to be at least one positional argument
         return empty;
     }
 
-    ast::Expression *prefixNode = nullptr;
+    ast::TreePtr const *prefixNode = nullptr;
     core::NameRef toName;
     {
         optional<core::NameRef> to;
         for (int i = 0; i < options->keys.size(); i++) {
-            if (literalSymbolEqual(ctx, options->keys[i].get(), core::Names::to())) {
-                to = stringOrSymbolNameRef(ctx, options->values[i].get());
+            if (literalSymbolEqual(ctx, options->keys[i], core::Names::to())) {
+                to = stringOrSymbolNameRef(ctx, options->values[i]);
             }
-            if (literalSymbolEqual(ctx, options->keys[i].get(), core::Names::prefix())) {
-                prefixNode = options->values[i].get();
+            if (literalSymbolEqual(ctx, options->keys[i], core::Names::prefix())) {
+                prefixNode = &options->values[i];
             }
         }
 
@@ -80,19 +82,19 @@ vector<unique_ptr<ast::Expression>> Delegate::run(core::MutableContext ctx, cons
     string beforeUnderscore;
     bool useToAsPrefix = false;
     if (prefixNode) {
-        if (isLiteralTrue(ctx, prefixNode)) {
+        if (isLiteralTrue(ctx, *prefixNode)) {
             beforeUnderscore = toName.data(ctx)->shortName(ctx);
             useToAsPrefix = true;
-        } else if (auto result = stringOrSymbolNameRef(ctx, prefixNode)) {
+        } else if (auto result = stringOrSymbolNameRef(ctx, *prefixNode)) {
             beforeUnderscore = result->data(ctx)->shortName(ctx);
         } else {
             return empty;
         }
     }
 
-    vector<unique_ptr<ast::Expression>> methodStubs;
-    for (int i = 0; i < send->args.size() - 1; i++) {
-        auto lit = ast::cast_tree<ast::Literal>(send->args[i].get());
+    vector<ast::TreePtr> methodStubs;
+    for (int i = 0; i < send->numPosArgs; i++) {
+        auto *lit = ast::cast_tree<ast::Literal>(send->args[i]);
         if (!lit || !lit->isSymbol(ctx)) {
             return empty;
         }
@@ -108,21 +110,19 @@ vector<unique_ptr<ast::Expression>> Delegate::run(core::MutableContext ctx, cons
             methodName = lit->asSymbol(ctx);
         }
         // sig {params(arg0: T.untyped, blk: Proc).returns(T.untyped)}
-        ast::Hash::ENTRY_store paramsKeys;
-        paramsKeys.emplace_back(ast::MK::Symbol(loc, core::Names::arg0()));
-        paramsKeys.emplace_back(ast::MK::Symbol(loc, core::Names::blkArg()));
+        ast::Send::ARGS_store sigArgs;
+        sigArgs.emplace_back(ast::MK::Symbol(loc, core::Names::arg0()));
+        sigArgs.emplace_back(ast::MK::Untyped(loc));
 
-        ast::Hash::ENTRY_store paramsValues;
-        paramsValues.emplace_back(ast::MK::Untyped(loc));
-        paramsValues.emplace_back(ast::MK::Nilable(loc, ast::MK::Constant(loc, core::Symbols::Proc())));
+        sigArgs.emplace_back(ast::MK::Symbol(loc, core::Names::blkArg()));
+        sigArgs.emplace_back(ast::MK::Nilable(loc, ast::MK::Constant(loc, core::Symbols::Proc())));
 
-        methodStubs.push_back(ast::MK::Sig(loc, ast::MK::Hash(loc, std::move(paramsKeys), std::move(paramsValues)),
-                                           ast::MK::Untyped(loc)));
+        methodStubs.push_back(ast::MK::Sig(loc, std::move(sigArgs), ast::MK::Untyped(loc)));
 
         // def $methodName(*arg0, &blk); end
         ast::MethodDef::ARGS_store args;
         args.emplace_back(ast::MK::RestArg(loc, ast::MK::Local(loc, core::Names::arg0())));
-        args.emplace_back(std::make_unique<ast::BlockArg>(loc, ast::MK::Local(loc, core::Names::blkArg())));
+        args.emplace_back(ast::make_tree<ast::BlockArg>(loc, ast::MK::Local(loc, core::Names::blkArg())));
 
         methodStubs.push_back(ast::MK::SyntheticMethod(loc, loc, methodName, std::move(args), ast::MK::EmptyTree()));
     }

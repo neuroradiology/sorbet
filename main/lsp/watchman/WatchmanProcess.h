@@ -4,8 +4,11 @@
 #include "absl/synchronization/mutex.h"
 #include "common/common.h"
 #include "core/core.h"
-#include "main/lsp/json_types.h"
 #include "spdlog/spdlog.h"
+
+namespace sorbet::realmain::lsp {
+class WatchmanQueryResponse;
+}
 
 namespace sorbet::realmain::lsp::watchman {
 class WatchmanProcess {
@@ -15,7 +18,7 @@ private:
     const std::string workSpace;
     const std::vector<std::string> extensions;
     const std::function<void(std::unique_ptr<sorbet::realmain::lsp::WatchmanQueryResponse>)> processUpdate;
-    const std::function<void(int)> processExit;
+    const std::function<void(int, std::string const &)> processExit;
     const std::unique_ptr<Joinable> thread;
     // Mutex that must be held before reading or writing stopped.
     absl::Mutex mutex;
@@ -27,7 +30,7 @@ private:
      */
     void start();
 
-    void exitWithCode(int code);
+    void exitWithCode(int code, std::string const &);
 
     bool isStopped();
 
@@ -39,7 +42,7 @@ public:
     WatchmanProcess(std::shared_ptr<spdlog::logger> logger, std::string_view watchmanPath, std::string_view workSpace,
                     std::vector<std::string> extensions,
                     std::function<void(std::unique_ptr<sorbet::realmain::lsp::WatchmanQueryResponse>)> processUpdate,
-                    std::function<void(int)> processExit);
+                    std::function<void(int, std::string const &)> processExit);
 
     ~WatchmanProcess();
 

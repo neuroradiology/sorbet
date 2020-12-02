@@ -21,6 +21,8 @@ passes=(
   desugar-tree-raw
   rewrite-tree
   rewrite-tree-raw
+  index-tree
+  index-tree-raw
   symbol-table
   symbol-table-raw
   name-tree
@@ -35,6 +37,7 @@ passes=(
   cfg-raw
   autogen
   document-symbols
+  package-tree
 )
 
 bazel build //main:sorbet //test:print_document_symbols -c opt
@@ -54,7 +57,14 @@ basename=
 srcs=()
 
 for this_src in "${rb_src[@]}" DUMMY; do
-  this_base="${this_src%__*}"
+  # Packager tests are folder based.
+  if [[ "$this_src" =~ (.*/packager/([^/]+)/).* ]]; then
+    # Basename for all .exp files in packager folder is "pass.$pass.exp"
+    this_base="${BASH_REMATCH[1]}pass"
+  else
+    this_base="${this_src%__*}"
+  fi
+
   if [ "$this_base" = "$basename" ]; then
     srcs=("${srcs[@]}" "$this_src")
     continue
@@ -66,6 +76,9 @@ for this_src in "${rb_src[@]}" DUMMY; do
       args=()
       if [ "$pass" = "autogen" ]; then
         args=("--stop-after=namer --skip-rewriter-passes")
+      fi
+      if [ "$pass" = "package-tree" ]; then
+        args=("--stripe-packages")
       fi
       if ! [ -e "$candidate" ]; then
         continue

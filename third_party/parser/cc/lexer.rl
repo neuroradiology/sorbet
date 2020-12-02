@@ -1028,7 +1028,7 @@ void lexer::set_state_expr_value() {
 
   action extend_string_escaped {
     auto& current_literal = literal_();
-
+    // Get the first character after the backslash.
     // TODO multibyte
     auto escaped_char = *escape_s;
 
@@ -1071,7 +1071,26 @@ void lexer::set_state_expr_value() {
       }
     } else {
       // It does not. So this is an actual escape sequence, yay!
-      if (current_literal.regexp()) {
+      if (current_literal.squiggly_heredoc() && escaped_char == '\n') {
+        // Squiggly heredocs like
+        //   <<~-HERE
+        //     1\
+        //     2
+        //   HERE
+        // treat '\' as a line continuation, but still dedent the body, so the heredoc above becomes "12\n".
+        // This information is emitted as is, without escaping,
+        // later this escape sequence (\\\n) gets handled manually in the dedenter
+        std::string str = gsub(tok(), "\\\n", "");
+        current_literal.extend_string(str, ts, te);
+      } else if (current_literal.support_line_continuation_via_slash() && escaped_char == '\n') {
+        // Heredocs, regexp and a few other types of literals support line
+        // continuation via \\\n sequence. The code like
+        //   "a\
+        //   b"
+        // must be parsed as "ab"
+        std::string str = gsub(tok(), "\\\n", "");
+        current_literal.extend_string(str, ts, te);
+      } else if (current_literal.regexp()) {
         // Regular expressions should include escape sequences in their
         // escaped form. On the other hand, escaped newlines are removed.
         std::string str = gsub(tok(), "\\\n", "");
@@ -1181,6 +1200,25 @@ void lexer::set_state_expr_value() {
     fcall expr_variable;
   }
 
+  # Special case for Ruby > 2.7
+  # If interpolated instance/class variable starts with a digit we parse it as a plain substring
+  # However, "#$1" is still a regular interpolation
+  interp_digit_var = '#' ('@' | '@@') digit c_alpha*;
+
+  action extend_interp_digit_var {
+    if (version >= ruby_version::RUBY_27) {
+      auto& current_literal = literal_();
+      std::string str = tok();
+      current_literal.extend_string(str, ts, te);
+    } else {
+      if (ts[0] == '#' && ts[1] == '@' && ts[2] == '@') {
+        diagnostic_(dlevel::ERROR, dclass::CvarName, tok(ts, te));
+      } else {
+        diagnostic_(dlevel::ERROR, dclass::IvarName, tok(ts, te));
+      }
+    }
+  }
+
   # Interpolations with code blocks must match nested curly braces, as
   # interpolation ending is ambiguous with a block ending. So, every
   # opening and closing brace should be matched with e_[lr]brace rules,
@@ -1247,60 +1285,64 @@ void lexer::set_state_expr_value() {
   # above.
 
   interp_words := |*
-      interp_code => extend_interp_code;
-      interp_var  => extend_interp_var;
-      e_bs escape => extend_string_escaped;
-      c_space+    => extend_string_space;
-      c_eol       => extend_string_eol;
-      c_any       => extend_string;
+      interp_code       => extend_interp_code;
+      interp_digit_var  => extend_interp_digit_var;
+      interp_var        => extend_interp_var;
+      e_bs escape       => extend_string_escaped;
+      c_space+          => extend_string_space;
+      c_eol             => extend_string_eol;
+      c_any             => extend_string;
   *|;
 
   interp_string := |*
-      interp_code => extend_interp_code;
-      interp_var  => extend_interp_var;
-      e_bs escape => extend_string_escaped;
-      c_eol       => extend_string_eol;
-      c_any       => extend_string;
+      interp_code       => extend_interp_code;
+      interp_digit_var  => extend_interp_digit_var;
+      interp_var        => extend_interp_var;
+      e_bs escape       => extend_string_escaped;
+      c_eol             => extend_string_eol;
+      c_any             => extend_string;
   *|;
 
   plain_words := |*
-      e_bs c_any  => extend_string_escaped;
-      c_space+    => extend_string_space;
-      c_eol       => extend_string_eol;
-      c_any       => extend_string;
+      e_bs c_any        => extend_string_escaped;
+      c_space+          => extend_string_space;
+      c_eol             => extend_string_eol;
+      c_any             => extend_string;
   *|;
 
   plain_string := |*
-      '\\' c_nl   => extend_string_eol;
-      e_bs c_any  => extend_string_escaped;
-      c_eol       => extend_string_eol;
-      c_any       => extend_string;
+      '\\' c_nl         => extend_string_eol;
+      e_bs c_any        => extend_string_escaped;
+      c_eol             => extend_string_eol;
+      c_any             => extend_string;
   *|;
 
   interp_backslash_delimited := |*
-      interp_code => extend_interp_code;
-      interp_var  => extend_interp_var;
-      c_eol       => extend_string_eol;
-      c_any       => extend_string;
+      interp_code       => extend_interp_code;
+      interp_digit_var  => extend_interp_digit_var;
+      interp_var        => extend_interp_var;
+      c_eol             => extend_string_eol;
+      c_any             => extend_string;
   *|;
 
   plain_backslash_delimited := |*
-      c_eol       => extend_string_eol;
-      c_any       => extend_string;
+      c_eol             => extend_string_eol;
+      c_any             => extend_string;
   *|;
 
   interp_backslash_delimited_words := |*
-      interp_code => extend_interp_code;
-      interp_var  => extend_interp_var;
-      c_space+    => extend_string_space;
-      c_eol       => extend_string_eol;
-      c_any       => extend_string;
+      interp_code       => extend_interp_code;
+      interp_digit_var  => extend_interp_digit_var;
+      interp_var        => extend_interp_var;
+      c_space+          => extend_string_space;
+      c_eol             => extend_string_eol;
+      c_any             => extend_string;
   *|;
 
   plain_backslash_delimited_words := |*
-      c_space+    => extend_string_space;
-      c_eol       => extend_string_eol;
-      c_any       => extend_string;
+      c_space+          => extend_string_space;
+      c_eol             => extend_string_eol;
+      c_any             => extend_string;
   *|;
 
   regexp_modifiers := |*
@@ -2108,6 +2150,23 @@ void lexer::set_state_expr_value() {
         fnext expr_end; fbreak;
       };
 
+      ':' ( '@'  %{ tm = p - 1; }
+          | '@@' %{ tm = p - 2; }
+          ) [0-9]*
+      => {
+        if (version == ruby_version::RUBY_27) {
+          if (ts[0] == ':' && ts[1] == '@' && ts[2] == '@') {
+            diagnostic_(dlevel::ERROR, dclass::CvarName, tok(ts + 1, te));
+          } else {
+            diagnostic_(dlevel::ERROR, dclass::IvarName, tok(ts + 1, te));
+          }
+        } else {
+          emit(token_type::tCOLON, tok(ts, ts + 1), ts, ts + 1);
+          p = ts;
+        }
+        fnext expr_end; fbreak;
+      };
+
       #
       # AMBIGUOUS TERNARY OPERATOR
       #
@@ -2165,6 +2224,20 @@ void lexer::set_state_expr_value() {
       #
       # KEYWORDS AND PUNCTUATION
       #
+
+      # Ruby >= 2.7 emits it as two tPIPE terminals
+      # while Ruby < 2.7 as a single tOROP (like in `a || b`)
+      '||'
+      => {
+        if (version >= ruby_version::RUBY_27) {
+          emit(token_type::tPIPE, tok(ts, ts + 1), ts, ts + 1);
+          fhold;
+          fnext expr_beg; fbreak;
+        } else {
+          p -= 2;
+          fgoto expr_end;
+        }
+      };
 
       # a({b=>c})
       e_lbrace
@@ -2662,7 +2735,23 @@ void lexer::set_state_expr_value() {
   leading_dot := |*
       # Insane leading dots:
       # a #comment
+      #  # post-2.7 comment
       #  .b: a.b
+
+      (c_space* w_space_comment '\n')+
+      => {
+        if (version < ruby_version::RUBY_27) {
+          // Ruby before 2.7 doesn't support comments before leading dot.
+          // If a line after "a" starts with a comment then "a" is a self-contained statement.
+          // So in that case we emit a special tNL token and start reading the
+          // next line as a separate statement.
+          //
+          // Note: block comments before leading dot are not supported on any version of Ruby.
+          emit(token_type::tNL, std::string(), newline_s, newline_s + 1);
+          fhold; fnext line_begin; fbreak;
+        }
+      };
+
       c_space* %{ tm = p; } ('.' | '&.')
       => { p = tm - 1; fgoto expr_end; };
 

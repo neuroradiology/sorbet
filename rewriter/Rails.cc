@@ -15,40 +15,40 @@ void Rails::run(core::MutableContext ctx, ast::ClassDef *cdef) {
     if (cdef->ancestors.size() != 1) {
         return;
     }
-    auto send = ast::cast_tree<ast::Send>(cdef->ancestors[0].get());
+    auto send = ast::cast_tree<ast::Send>(cdef->ancestors[0]);
     if (!send) {
         return;
     }
     if (send->fun != core::Names::squareBrackets()) {
         return;
     }
-    auto name = ast::cast_tree<ast::UnresolvedConstantLit>(send->recv.get());
+    auto name = ast::cast_tree<ast::UnresolvedConstantLit>(send->recv);
     if (!name) {
         return;
     }
     if (name->cnst != core::Names::Constants::Migration()) {
         return;
     }
-    auto name2 = ast::cast_tree<ast::UnresolvedConstantLit>(name->scope.get());
+    auto name2 = ast::cast_tree<ast::UnresolvedConstantLit>(name->scope);
     if (!name2) {
         return;
     }
     if (name2->cnst != core::Names::Constants::ActiveRecord()) {
         return;
     }
-    if (send->args.size() != 1) {
+    if (send->args.size() != 1 && !send->hasKwArgs()) {
         return;
     }
-    auto arg = ast::cast_tree<ast::Literal>(send->args[0].get());
+    auto arg = ast::cast_tree<ast::Literal>(send->args[0]);
     if (!arg) {
         return;
     }
-    auto value = core::cast_type<core::LiteralType>(arg->value.get());
-    if (value->literalKind != core::LiteralType::LiteralTypeKind::Float) {
+    auto value = core::cast_type_nonnull<core::LiteralType>(arg->value);
+    if (value.literalKind != core::LiteralType::LiteralTypeKind::Float) {
         return;
     }
     char version[5];
-    snprintf(version, sizeof(version), "V%.1f", value->floatval);
+    snprintf(version, sizeof(version), "V%.1f", value.floatval);
     absl::c_replace(version, '.', '_');
 
     cdef->ancestors.emplace_back(ast::MK::UnresolvedConstant(

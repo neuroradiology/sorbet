@@ -8,7 +8,7 @@ module T::Types
     attr_reader :types
 
     def initialize(types)
-      @types = types.each_with_object({}) {|(k, v), h| h[k] = T::Utils.coerce(v)}
+      @types = types.transform_values {|v| T::Utils.coerce(v)}
     end
 
     # @override Base
@@ -17,17 +17,18 @@ module T::Types
     end
 
     # @override Base
+    def recursively_valid?(obj)
+      return false unless obj.is_a?(Hash)
+      return false if @types.any? {|key, type| !type.recursively_valid?(obj[key])}
+      return false if obj.any? {|key, _| !@types[key]}
+      true
+    end
+
+    # @override Base
     def valid?(obj)
       return false unless obj.is_a?(Hash)
-
-      @types.each do |key, type|
-        return false unless type.valid?(obj[key])
-      end
-
-      obj.each_key do |key|
-        return false unless @types[key]
-      end
-
+      return false if @types.any? {|key, type| !type.valid?(obj[key])}
+      return false if obj.any? {|key, _| !@types[key]}
       true
     end
 

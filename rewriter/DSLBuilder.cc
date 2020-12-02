@@ -18,8 +18,8 @@ using namespace std;
 //
 
 namespace sorbet::rewriter {
-vector<unique_ptr<ast::Expression>> DSLBuilder::run(core::MutableContext ctx, ast::Send *send) {
-    vector<unique_ptr<ast::Expression>> empty;
+vector<ast::TreePtr> DSLBuilder::run(core::MutableContext ctx, ast::Send *send) {
+    vector<ast::TreePtr> empty;
 
     if (ctx.state.runningUnderAutogen) {
         return empty;
@@ -29,8 +29,8 @@ vector<unique_ptr<ast::Expression>> DSLBuilder::run(core::MutableContext ctx, as
     bool implied = false;
     bool skipGetter = false;
     bool skipSetter = false;
-    unique_ptr<ast::Expression> type;
-    core::NameRef name = core::NameRef::noName();
+    ast::TreePtr type;
+    core::NameRef name;
 
     if (send->fun == core::Names::dslOptional()) {
         nilable = true;
@@ -42,25 +42,22 @@ vector<unique_ptr<ast::Expression>> DSLBuilder::run(core::MutableContext ctx, as
     if (send->args.size() < 2) {
         return empty;
     }
-    auto *sym = ast::cast_tree<ast::Literal>(send->args[0].get());
+    auto *sym = ast::cast_tree<ast::Literal>(send->args[0]);
     if (sym == nullptr || !sym->isSymbol(ctx)) {
         return empty;
     }
     name = sym->asSymbol(ctx);
 
-    ENFORCE(!sym->loc.source(ctx).empty() && sym->loc.source(ctx)[0] == ':');
-    auto nameLoc = core::Loc(sym->loc.file(), sym->loc.beginPos() + 1, sym->loc.endPos());
+    ENFORCE(!core::Loc(ctx.file, sym->loc).source(ctx).empty() && core::Loc(ctx.file, sym->loc).source(ctx)[0] == ':');
+    auto nameLoc = core::LocOffsets{sym->loc.beginPos() + 1, sym->loc.endPos()};
 
-    type = ASTUtil::dupType(send->args[1].get());
+    type = ASTUtil::dupType(send->args[1]);
     if (!type) {
         return empty;
     }
 
-    ast::Hash *opts = nullptr;
-    if (send->args.size() > 2) {
-        opts = ast::cast_tree<ast::Hash>(send->args[2].get());
-    }
-    if (opts != nullptr) {
+    ast::TreePtr optsTree = ASTUtil::mkKwArgsHash(send);
+    if (auto *opts = ast::cast_tree<ast::Hash>(optsTree)) {
         if (ASTUtil::hasHashValue(ctx, *opts, core::Names::default_())) {
             nilable = false;
         }
@@ -77,37 +74,37 @@ vector<unique_ptr<ast::Expression>> DSLBuilder::run(core::MutableContext ctx, as
 
     auto loc = send->loc;
 
-    vector<unique_ptr<ast::Expression>> stats;
+    vector<ast::TreePtr> stats;
 
     // def self.<prop>
     if (!skipSetter) {
-        stats.emplace_back(ast::MK::Sig1(loc, ast::MK::Symbol(nameLoc, name), ASTUtil::dupType(type.get()),
+        stats.emplace_back(ast::MK::Sig1(loc, ast::MK::Symbol(nameLoc, name), ASTUtil::dupType(type),
                                          ast::MK::Constant(loc, core::Symbols::NilClass())));
-        unique_ptr<ast::Reference> arg = ast::MK::Local(nameLoc, name);
+        auto arg = ast::MK::Local(nameLoc, name);
         if (implied) {
-            auto default_ = ast::MK::Send0(loc, ast::MK::T(loc), core::Names::untyped());
+            auto default_ = ast::MK::UntypedNil(loc);
             arg = ast::MK::OptionalArg(loc, move(arg), move(default_));
         }
         auto defSelfProp = ast::MK::SyntheticMethod1(loc, loc, name, move(arg), ast::MK::EmptyTree());
-        defSelfProp->flags.isSelfMethod = true;
+        ast::cast_tree<ast::MethodDef>(defSelfProp)->flags.isSelfMethod = true;
         stats.emplace_back(move(defSelfProp));
     }
 
     if (!skipGetter) {
         if (nilable) {
-            auto tyloc = type->loc;
+            auto tyloc = type.loc();
             type = ast::MK::Nilable(tyloc, move(type));
         }
         // def self.get_<prop>
         core::NameRef getName = ctx.state.enterNameUTF8("get_" + name.data(ctx)->show(ctx));
-        stats.emplace_back(ast::MK::Sig0(loc, ASTUtil::dupType(type.get())));
-        auto defSelfGetProp = ast::MK::SyntheticMethod(loc, loc, getName, {}, ast::MK::Unsafe(loc, ast::MK::Nil(loc)));
-        defSelfGetProp->flags.isSelfMethod = true;
+        stats.emplace_back(ast::MK::Sig0(loc, ASTUtil::dupType(type)));
+        auto defSelfGetProp = ast::MK::SyntheticMethod(loc, loc, getName, {}, ast::MK::RaiseUnimplemented(loc));
+        ast::cast_tree<ast::MethodDef>(defSelfGetProp)->flags.isSelfMethod = true;
         stats.emplace_back(move(defSelfGetProp));
 
         // def <prop>()
-        stats.emplace_back(ast::MK::Sig0(loc, ASTUtil::dupType(type.get())));
-        stats.emplace_back(ast::MK::SyntheticMethod(loc, loc, name, {}, ast::MK::Unsafe(loc, ast::MK::Nil(loc))));
+        stats.emplace_back(ast::MK::Sig0(loc, ASTUtil::dupType(type)));
+        stats.emplace_back(ast::MK::SyntheticMethod(loc, loc, name, {}, ast::MK::RaiseUnimplemented(loc)));
     }
 
     return stats;

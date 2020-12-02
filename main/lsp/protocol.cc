@@ -1,17 +1,20 @@
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
+#include "common/EarlyReturnWithCode.h"
 #include "common/Timer.h"
 #include "common/web_tracer_framework/tracing.h"
 #include "core/lsp/TypecheckEpochManager.h"
-#include "lsp.h"
+#include "main/lsp/LSPConfiguration.h"
 #include "main/lsp/LSPInput.h"
+#include "main/lsp/LSPOutput.h"
 #include "main/lsp/LSPPreprocessor.h"
 #include "main/lsp/LSPTask.h"
+#include "main/lsp/json_types.h"
+#include "main/lsp/lsp.h"
 #include "main/lsp/watchman/WatchmanProcess.h"
-#include "main/options/options.h" // For EarlyReturnWithCode.
-#include <iostream>
 
 using namespace std;
+namespace spd = spdlog;
 
 namespace sorbet::realmain::lsp {
 
@@ -48,10 +51,9 @@ CounterState mergeCounters(CounterState counters) {
 }
 
 void tagNewRequest(spd::logger &logger, LSPMessage &msg) {
-    // apparently make_unique doesn't like initializer lists, so I'm passing it a Timer object directly.
-    msg.latencyTimer = make_unique<Timer>(
-        Timer(logger, "task_latency",
-              {50, 100, 250, 500, 1000, 1500, 2000, 2500, 5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000}));
+    msg.latencyTimer = make_unique<Timer>(logger, "task_latency",
+                                          initializer_list<int>{50, 100, 250, 500, 1000, 1500, 2000, 2500, 5000, 10000,
+                                                                15000, 20000, 25000, 30000, 35000, 40000});
 }
 } // namespace
 
@@ -88,7 +90,7 @@ unique_ptr<Joinable> LSPPreprocessor::runPreprocessor(MessageQueueState &message
             {
                 absl::MutexLock lck(taskQueueMutex.get());
                 // Merge the counters from all of the worker threads with those stored in
-                // processingQueue.
+                // taskQueue.
                 taskQueue->counters = mergeCounters(move(taskQueue->counters));
                 if (taskQueue->terminate) {
                     // We must have processed an exit notification, or one of the downstream threads exited.
@@ -118,9 +120,13 @@ optional<unique_ptr<core::GlobalState>> LSPLoop::runLSP(shared_ptr<LSPInput> inp
     auto &logger = config->logger;
     if (!opts.disableWatchman) {
         if (opts.rawInputDirNames.size() != 1 || !opts.rawInputFileNames.empty()) {
-            logger->error("Watchman support currently only works when Sorbet is run with a single input directory. If "
-                          "Watchman is not needed, run Sorbet with `--disable-watchman`.");
-            throw options::EarlyReturnWithCode(1);
+            auto msg = "Watchman support currently only works when Sorbet is run with a single input directory. If "
+                       "Watchman is not needed, run Sorbet with `--disable-watchman`.";
+            logger->error(msg);
+            auto params = make_unique<ShowMessageParams>(MessageType::Error, msg);
+            config->output->write(make_unique<LSPMessage>(
+                make_unique<NotificationMessage>("2.0", LSPMethod::WindowShowMessage, move(params))));
+            throw EarlyReturnWithCode(1);
         }
 
         // The lambda below intentionally does not capture `this`.
@@ -140,12 +146,18 @@ optional<unique_ptr<core::GlobalState>> LSPLoop::runLSP(shared_ptr<LSPInput> inp
                     messageQueue.pendingRequests.push_back(move(msg));
                 }
             },
-            [&messageQueue, &messageQueueMutex, logger = logger](int watchmanExitCode) {
+            [&messageQueue, &messageQueueMutex, logger = logger, config = this->config](int watchmanExitCode,
+                                                                                        string const &msg) {
                 {
                     absl::MutexLock lck(&messageQueueMutex);
                     if (!messageQueue.terminate) {
                         messageQueue.terminate = true;
                         messageQueue.errorCode = watchmanExitCode;
+                        if (watchmanExitCode != 0) {
+                            auto params = make_unique<ShowMessageParams>(MessageType::Error, msg);
+                            config->output->write(make_unique<LSPMessage>(
+                                make_unique<NotificationMessage>("2.0", LSPMethod::WindowShowMessage, move(params))));
+                        }
                     }
                     logger->debug("Watchman terminating");
                 }
@@ -208,7 +220,7 @@ optional<unique_ptr<core::GlobalState>> LSPLoop::runLSP(shared_ptr<LSPInput> inp
                     if (taskQueue->errorCode != 0) {
                         // Abnormal termination. Exit immediately.
                         typecheckerCoord.shutdown();
-                        throw options::EarlyReturnWithCode(taskQueue->errorCode);
+                        throw EarlyReturnWithCode(taskQueue->errorCode);
                     } else if (taskQueue->pendingTasks.empty()) {
                         // Normal termination. Wait until all pending requests finish.
                         break;
@@ -269,6 +281,11 @@ optional<unique_ptr<core::GlobalState>> LSPLoop::runLSP(shared_ptr<LSPInput> inp
 
                 task = move(taskQueue->pendingTasks.front());
                 taskQueue->pendingTasks.pop_front();
+
+                // Test only: Collect counters from other threads into this thread for reporting.
+                if (task->method == LSPMethod::GETCOUNTERS && !taskQueue->counters.hasNullCounters()) {
+                    counterConsume(move(taskQueue->counters));
+                }
             }
 
             logger->debug("[Processing] Running task {} normally", convertLSPMethodToString(task->method));

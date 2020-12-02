@@ -12,7 +12,7 @@ class T::Props::Decorator
 
   Rules = T.type_alias {T::Hash[Symbol, T.untyped]}
   DecoratedInstance = T.type_alias {Object} # Would be T::Props, but that produces circular reference errors in some circumstances
-  PropType = T.type_alias {T.any(T::Types::Base, T::Props::CustomType)}
+  PropType = T.type_alias {T::Types::Base}
   PropTypeOrClass = T.type_alias {T.any(PropType, Module)}
 
   class NoRulesError < StandardError; end
@@ -20,7 +20,7 @@ class T::Props::Decorator
   EMPTY_PROPS = T.let({}.freeze, T::Hash[Symbol, Rules])
   private_constant :EMPTY_PROPS
 
-  sig {params(klass: T.untyped).void}
+  sig {params(klass: T.untyped).void.checked(:never)}
   def initialize(klass)
     @class = T.let(klass, T.all(Module, T::Props::ClassMethods))
     @class.plugins.each do |mod|
@@ -54,7 +54,7 @@ class T::Props::Decorator
     @props = @props.merge(prop => rules.freeze).freeze
   end
 
-  VALID_RULE_KEYS = T.let(%i{
+  VALID_RULE_KEYS = T.let(%i[
     enum
     foreign
     foreign_hint_only
@@ -66,9 +66,9 @@ class T::Props::Decorator
     without_accessors
     clobber_existing_method!
     extra
-    optional
+    setter_validate
     _tnilable
-  }.map {|k| [k, true]}.to_h.freeze, T::Hash[Symbol, T::Boolean])
+  ].map {|k| [k, true]}.to_h.freeze, T::Hash[Symbol, T::Boolean])
   private_constant :VALID_RULE_KEYS
 
   sig {params(key: Symbol).returns(T::Boolean).checked(:never)}
@@ -118,6 +118,21 @@ class T::Props::Decorator
   end
   alias_method :set, :prop_set
 
+  # Only Models have any custom get logic but we need to call this on
+  # non-Models since we don't know at code gen time what we have.
+  sig do
+    params(
+      instance: DecoratedInstance,
+      prop: Symbol,
+      value: T.untyped
+    )
+    .returns(T.untyped)
+    .checked(:never)
+  end
+  def prop_get_logic(instance, prop, value)
+    value
+  end
+
   # For performance, don't use named params here.
   # Passing in rules here is purely a performance optimization.
   #
@@ -138,12 +153,10 @@ class T::Props::Decorator
     val = instance.instance_variable_get(rules[:accessor_key])
     if !val.nil?
       val
+    elsif (d = rules[:ifunset])
+      T::Props::Utils.deep_clone_object(d)
     else
-      if (d = rules[:ifunset])
-        T::Props::Utils.deep_clone_object(d)
-      else
-        nil
-      end
+      nil
     end
   end
 
@@ -173,7 +186,7 @@ class T::Props::Decorator
     .returns(T.untyped)
     .checked(:never)
   end
-  def foreign_prop_get(instance, prop, foreign_class, rules=props[prop.to_sym], opts={})
+  def foreign_prop_get(instance, prop, foreign_class, rules=prop_rules(prop), opts={})
     return if !(value = prop_get(instance, prop, rules))
     T.unsafe(foreign_class).load(value, {}, opts)
   end
@@ -204,21 +217,13 @@ class T::Props::Decorator
       raise ArgumentError.new("At least one invalid prop arg supplied in #{self}: #{rules.keys.inspect}")
     end
 
-    if (array = rules[:array])
-      unless array.is_a?(Module)
-        raise ArgumentError.new("Bad class as subtype in prop #{@class.name}.#{name}: #{array.inspect}")
-      end
-    end
-
-    if !(rules[:clobber_existing_method!]) && !(rules[:without_accessors])
-      if BANNED_METHOD_NAMES.include?(name.to_sym)
-        raise ArgumentError.new(
-          "#{name} can't be used as a prop in #{@class} because a method with " \
-          "that name already exists (defined by #{@class.instance_method(name).owner} " \
-          "at #{@class.instance_method(name).source_location || '<unknown>'}). " \
-          "(If using this name is unavoidable, try `without_accessors: true`.)"
-        )
-      end
+    if !rules[:clobber_existing_method!] && !rules[:without_accessors] && BANNED_METHOD_NAMES.include?(name.to_sym)
+      raise ArgumentError.new(
+        "#{name} can't be used as a prop in #{@class} because a method with " \
+        "that name already exists (defined by #{@class.instance_method(name).owner} " \
+        "at #{@class.instance_method(name).source_location || '<unknown>'}). " \
+        "(If using this name is unavoidable, try `without_accessors: true`.)"
+      )
     end
 
     extra = rules[:extra]
@@ -229,10 +234,12 @@ class T::Props::Decorator
     nil
   end
 
+  SAFE_NAME = T.let(/\A[A-Za-z_][A-Za-z0-9_-]*\z/.freeze, Regexp)
+
   # Used to validate both prop names and serialized forms
   sig {params(name: T.any(Symbol, String)).void}
   private def validate_prop_name(name)
-    if !name.match?(/\A[A-Za-z_][A-Za-z0-9_-]*\z/)
+    if !name.match?(SAFE_NAME)
       raise ArgumentError.new("Invalid prop name in #{@class.name}: #{name}")
     end
   end
@@ -277,47 +284,6 @@ class T::Props::Decorator
   end
   def prop_defined(name, cls, rules={})
     cls = T::Utils.resolve_alias(cls)
-    if rules[:optional] == true
-      T::Configuration.hard_assert_handler(
-        'Use of `optional: true` is deprecated, please use `T.nilable(...)` instead.',
-        storytime: {
-          name: name,
-          cls_or_args: cls.to_s,
-          args: rules,
-          klass: decorated_class.name,
-        },
-      )
-    elsif rules[:optional] == false
-      T::Configuration.hard_assert_handler(
-        'Use of `optional: :false` is deprecated as it\'s the default value.',
-        storytime: {
-          name: name,
-          cls_or_args: cls.to_s,
-          args: rules,
-          klass: decorated_class.name,
-        },
-      )
-    elsif rules[:optional] == :on_load
-      T::Configuration.hard_assert_handler(
-        'Use of `optional: :on_load` is deprecated. You probably want `T.nilable(...)` with :raise_on_nil_write instead.',
-        storytime: {
-          name: name,
-          cls_or_args: cls.to_s,
-          args: rules,
-          klass: decorated_class.name,
-        },
-      )
-    elsif rules[:optional] == :existing
-      T::Configuration.hard_assert_handler(
-        'Use of `optional: :existing` is not allowed: you should use use T.nilable (http://go/optional)',
-        storytime: {
-          name: name,
-          cls_or_args: cls.to_s,
-          args: rules,
-          klass: decorated_class.name,
-        },
-      )
-    end
 
     if T::Utils::Nilable.is_union_with_nilclass(cls)
       # :_tnilable is introduced internally for performance purpose so that clients do not need to call
@@ -332,31 +298,22 @@ class T::Props::Decorator
     if !cls.is_a?(Module)
       cls = convert_type_to_class(cls)
     end
-    type_object = type
-    if !(type_object.singleton_class < T::Props::CustomType)
-      type_object = smart_coerce(type_object, array: rules[:array], enum: rules[:enum])
-    end
+    type_object = smart_coerce(type, enum: rules[:enum])
 
     prop_validate_definition!(name, cls, rules, type_object)
 
     # Retrive the possible underlying object with T.nilable.
-    underlying_type_object = T::Utils::Nilable.get_underlying_type_object(type_object)
     type = T::Utils::Nilable.get_underlying_type(type)
-
-    array_subdoc_type = array_subdoc_type(underlying_type_object)
-    hash_value_subdoc_type = hash_value_subdoc_type(underlying_type_object)
-    hash_key_custom_type = hash_key_custom_type(underlying_type_object)
 
     sensitivity_and_pii = {sensitivity: rules[:sensitivity]}
     if defined?(Opus) && defined?(Opus::Sensitivity) && defined?(Opus::Sensitivity::Utils)
       sensitivity_and_pii = Opus::Sensitivity::Utils.normalize_sensitivity_and_pii_annotation(sensitivity_and_pii)
-    end
-    # We check for Class so this is only applied on concrete
-    # documents/models; We allow mixins containing props to not
-    # specify their PII nature, as long as every class into which they
-    # are ultimately included does.
-    #
-    if defined?(Opus) && defined?(Opus::Sensitivity) && defined?(Opus::Sensitivity::PIIable)
+
+      # We check for Class so this is only applied on concrete
+      # documents/models; We allow mixins containing props to not
+      # specify their PII nature, as long as every class into which they
+      # are ultimately included does.
+      #
       if sensitivity_and_pii[:pii] && @class.is_a?(Class) && !T.unsafe(@class).contains_pii?
         raise ArgumentError.new(
           'Cannot include a pii prop in a class that declares `contains_no_pii`'
@@ -364,27 +321,11 @@ class T::Props::Decorator
       end
     end
 
-    needs_clone =
-      if cls <= Array || cls <= Hash || cls <= Set
-        shallow_clone_ok(underlying_type_object) ? :shallow : true
-      else
-        false
-      end
-
     rules = rules.merge(
       # TODO: The type of this element is confusing. We should refactor so that
       # it can be always `type_object` (a PropType) or always `cls` (a Module)
       type: type,
-      # These are precomputed for performance
-      # TODO: A lot of these are only needed by T::Props::Serializable or T::Struct
-      # and can/should be moved accordingly.
-      type_is_custom_type: cls.singleton_class < T::Props::CustomType,
-      type_is_serializable: cls < T::Props::Serializable,
-      type_is_array_of_serializable: !array_subdoc_type.nil?,
-      type_is_hash_of_serializable_values: !hash_value_subdoc_type.nil?,
-      type_is_hash_of_custom_type_keys: !hash_key_custom_type.nil?,
       type_object: type_object,
-      type_needs_clone: needs_clone,
       accessor_key: "@#{name}".to_sym,
       sensitivity: sensitivity_and_pii[:sensitivity],
       pii: sensitivity_and_pii[:pii],
@@ -394,26 +335,13 @@ class T::Props::Decorator
 
     validate_not_missing_sensitivity(name, rules)
 
-    # for backcompat
-    if type.is_a?(T::Types::TypedArray) && type.type.is_a?(T::Types::Simple)
-      rules[:array] = type.type.raw_type
-    elsif array_subdoc_type
-      rules[:array] = array_subdoc_type
-    end
-
-    if rules[:type_is_serializable]
-      rules[:serializable_subtype] = cls
-    elsif array_subdoc_type
-      rules[:serializable_subtype] = array_subdoc_type
-    elsif hash_value_subdoc_type && hash_key_custom_type
-      rules[:serializable_subtype] = {
-        keys: hash_key_custom_type,
-        values: hash_value_subdoc_type,
-      }
-    elsif hash_value_subdoc_type
-      rules[:serializable_subtype] = hash_value_subdoc_type
-    elsif hash_key_custom_type
-      rules[:serializable_subtype] = hash_key_custom_type
+    # for backcompat (the `:array` key is deprecated but because the name is
+    # so generic it's really hard to be sure it's not being relied on anymore)
+    if type.is_a?(T::Types::TypedArray)
+      inner = T::Utils::Nilable.get_underlying_type(type.type)
+      if inner.is_a?(Module)
+        rules[:array] = inner
+      end
     end
 
     rules[:setter_proc] = T::Props::Private::SetterFactory.build_setter_proc(@class, name, rules).freeze
@@ -429,7 +357,7 @@ class T::Props::Decorator
     end
 
     handle_foreign_option(name, cls, rules, rules[:foreign]) if rules[:foreign]
-    handle_foreign_hint_only_option(cls, rules[:foreign_hint_only]) if rules[:foreign_hint_only]
+    handle_foreign_hint_only_option(name, cls, rules[:foreign_hint_only]) if rules[:foreign_hint_only]
     handle_redaction_option(name, rules[:redaction]) if rules[:redaction]
   end
 
@@ -459,110 +387,22 @@ class T::Props::Decorator
     end
   end
 
-  # returns the subdoc of the array type, or nil if it's not a Document type
-  #
-  # checked(:never) - Typechecks internally
   sig do
-    params(type: PropType)
-    .returns(T.nilable(Module))
-    .checked(:never)
-  end
-  private def array_subdoc_type(type)
-    if type.is_a?(T::Types::TypedArray)
-      el_type = T::Utils.unwrap_nilable(type.type) || type.type
-
-      if el_type.is_a?(T::Types::Simple) &&
-          (el_type.raw_type < T::Props::Serializable || el_type.raw_type.is_a?(T::Props::CustomType))
-        return el_type.raw_type
-      end
-    end
-
-    nil
-  end
-
-  # returns the subdoc of the hash value type, or nil if it's not a Document type
-  #
-  # checked(:never) - Typechecks internally
-  sig do
-    params(type: PropType)
-    .returns(T.nilable(Module))
-    .checked(:never)
-  end
-  private def hash_value_subdoc_type(type)
-    if type.is_a?(T::Types::TypedHash)
-      values_type = T::Utils.unwrap_nilable(type.values) || type.values
-
-      if values_type.is_a?(T::Types::Simple) &&
-          (values_type.raw_type < T::Props::Serializable || values_type.raw_type.is_a?(T::Props::CustomType))
-        return values_type.raw_type
-      end
-    end
-
-    nil
-  end
-
-  # returns the type of the hash key, or nil. Any CustomType could be a key, but we only expect T::Enum right now.
-  #
-  # checked(:never) - Typechecks internally
-  sig do
-    params(type: PropType)
-    .returns(T.nilable(Module))
-    .checked(:never)
-  end
-  private def hash_key_custom_type(type)
-    if type.is_a?(T::Types::TypedHash)
-      keys_type = T::Utils.unwrap_nilable(type.keys) || type.keys
-
-      if keys_type.is_a?(T::Types::Simple) && keys_type.raw_type.is_a?(T::Props::CustomType)
-        return keys_type.raw_type
-      end
-    end
-
-    nil
-  end
-
-  # From T::Props::Utils.deep_clone_object, plus String
-  TYPES_NOT_NEEDING_CLONE = T.let([TrueClass, FalseClass, NilClass, Symbol, String, Numeric], T::Array[Module])
-
-  # checked(:never) - Typechecks internally
-  sig {params(type: PropType).returns(T.nilable(T::Boolean)).checked(:never)}
-  private def shallow_clone_ok(type)
-    inner_type =
-      if type.is_a?(T::Types::TypedArray)
-        type.type
-      elsif type.is_a?(T::Types::TypedSet)
-        type.type
-      elsif type.is_a?(T::Types::TypedHash)
-        type.values
-      end
-
-    inner_type.is_a?(T::Types::Simple) && TYPES_NOT_NEEDING_CLONE.any? do |cls|
-      inner_type.raw_type <= cls
-    end
-  end
-
-  sig do
-    params(type: PropTypeOrClass, array: T.untyped, enum: T.untyped)
+    params(type: PropTypeOrClass, enum: T.untyped)
     .returns(T::Types::Base)
   end
-  private def smart_coerce(type, array:, enum:)
+  private def smart_coerce(type, enum:)
     # Backwards compatibility for pre-T::Types style
-    if !array.nil? && !enum.nil?
-      raise ArgumentError.new("Cannot specify both :array and :enum options")
-    elsif !array.nil?
-      if type == Set
-        T::Set[array]
-      else
-        T::Array[array]
-      end
-    elsif !enum.nil?
-      if T::Utils.unwrap_nilable(type)
-        T.nilable(T.enum(enum))
-      else
-        T.enum(enum)
-      end
+    type = T::Utils.coerce(type)
+    if enum.nil?
+      type
     else
-      T::Utils.coerce(type)
+      nonnil_type = T::Utils.unwrap_nilable(type)
+      if nonnil_type
+        T.nilable(T.all(nonnil_type, T.enum(enum)))
+      else
+        T.all(type, T.enum(enum))
+      end
     end
   end
 
@@ -582,7 +422,7 @@ class T::Props::Decorator
       # TODO(PRIVACYENG-982) Ideally we'd also check for 'password' and possibly
       # other terms, but this interacts badly with ProtoDefinedDocument because
       # the proto syntax currently can't declare "sensitivity: []"
-      if prop_name =~ /\bsecret\b/
+      if /\bsecret\b/.match?(prop_name)
         T::Configuration.hard_assert_handler(
           "#{@class}##{prop_name} has the word 'secret' in its name, but no " \
           "'sensitivity:' annotation. This is probably wrong, because if a " \
@@ -599,7 +439,7 @@ class T::Props::Decorator
   sig do
     params(
       prop_name: Symbol,
-      redaction: Chalk::Tools::RedactionUtils::RedactionDirectiveSpec,
+      redaction: T.untyped,
     )
     .void
   end
@@ -636,13 +476,14 @@ class T::Props::Decorator
 
   sig do
     params(
+      prop_name: Symbol,
       prop_cls: Module,
       foreign_hint_only: T.untyped,
     )
     .void
   end
-  private def handle_foreign_hint_only_option(prop_cls, foreign_hint_only)
-    if ![String, Array].include?(prop_cls) && !(prop_cls.is_a?(T::Props::CustomType))
+  private def handle_foreign_hint_only_option(prop_name, prop_cls, foreign_hint_only)
+    if ![String, Array].include?(prop_cls) && !prop_cls.is_a?(T::Props::CustomType)
       raise ArgumentError.new(
         "`foreign_hint_only` can only be used with String or Array prop types"
       )
@@ -652,6 +493,21 @@ class T::Props::Decorator
       :foreign_hint_only, foreign_hint_only,
       valid_type_msg: "an individual or array of a model class, or a Proc returning such."
     )
+
+    unless foreign_hint_only.is_a?(Proc)
+      T::Configuration.soft_assert_handler(<<~MESSAGE, storytime: {prop: prop_name, value: foreign_hint_only}, notify: 'jerry')
+        Please use a Proc that returns a model class instead of the model class itself as the argument to `foreign_hint_only`. In other words:
+
+          instead of `prop :foo, String, foreign_hint_only: FooModel`
+          use `prop :foo, String, foreign_hint_only: -> {FooModel}`
+
+          OR
+
+          instead of `prop :foo, String, foreign_hint_only: [FooModel, BarModel]`
+          use `prop :foo, String, foreign_hint_only: -> {[FooModel, BarModel]}`
+
+      MESSAGE
+    end
   end
 
   # checked(:never) - Rules hash is expensive to check
@@ -685,10 +541,10 @@ class T::Props::Decorator
         # of the method, optimizing it so this only runs on the first invocation.
         foreign = resolved_foreign
       end
-      if allow_direct_mutation.nil?
-        opts = {}
+      opts = if allow_direct_mutation.nil?
+        {}
       else
-        opts = {allow_direct_mutation: allow_direct_mutation}
+        {allow_direct_mutation: allow_direct_mutation}
       end
 
       T.unsafe(self.class).decorator.foreign_prop_get(self, prop_name, foreign, rules, opts)
@@ -704,14 +560,6 @@ class T::Props::Decorator
         )
       end
       loaded_foreign
-    end
-
-    @class.send(:define_method, "#{prop_name}_record") do |allow_direct_mutation: nil|
-      T::Configuration.soft_assert_handler(
-        "Using deprecated 'model.#{prop_name}_record' foreign key syntax. You should replace this with 'model.#{prop_name}_'",
-        notify: 'vasi'
-      )
-      send(fk_method, allow_direct_mutation: allow_direct_mutation)
     end
   end
 
@@ -743,6 +591,16 @@ class T::Props::Decorator
         "Using an array for `foreign` is no longer supported. Instead, use `foreign_hint_only` " \
         "with an array or a Proc that returns an array, e.g., foreign_hint_only: -> {[Foo, Bar]}"
       )
+    end
+
+    unless foreign.is_a?(Proc)
+      T::Configuration.soft_assert_handler(<<~MESSAGE, storytime: {prop: prop_name, value: foreign}, notify: 'jerry')
+        Please use a Proc that returns a model class instead of the model class itself as the argument to `foreign`. In other words:
+
+          instead of `prop :foo, String, foreign: FooModel`
+          use `prop :foo, String, foreign: -> {FooModel}`
+
+      MESSAGE
     end
 
     define_foreign_method(prop_name, rules, foreign)
@@ -781,23 +639,31 @@ class T::Props::Decorator
       # (b) it's safe because the getter was defined by this file.
       #
       unless rules[:without_accessors]
-        if child.decorator.method(:prop_get).owner != method(:prop_get).owner &&
-            child.instance_method(name).source_location&.first == __FILE__
+        if clobber_getter?(child, name)
           child.send(:define_method, name) do
             T.unsafe(self.class).decorator.prop_get(self, name, rules)
           end
         end
 
-        unless rules[:immutable]
-          if child.decorator.method(:prop_set).owner != method(:prop_set).owner &&
-              child.instance_method("#{name}=").source_location&.first == __FILE__
-            child.send(:define_method, "#{name}=") do |val|
-              T.unsafe(self.class).decorator.prop_set(self, name, val, rules)
-            end
+        if !rules[:immutable] && clobber_setter?(child, name)
+          child.send(:define_method, "#{name}=") do |val|
+            T.unsafe(self.class).decorator.prop_set(self, name, val, rules)
           end
         end
       end
     end
+  end
+
+  sig {params(child: T.all(Module, T::Props::ClassMethods), prop: Symbol).returns(T::Boolean).checked(:never)}
+  private def clobber_getter?(child, prop)
+    !!(child.decorator.method(:prop_get).owner != method(:prop_get).owner &&
+       child.instance_method(prop).source_location&.first == __FILE__)
+  end
+
+  sig {params(child: T.all(Module, T::Props::ClassMethods), prop: Symbol).returns(T::Boolean).checked(:never)}
+  private def clobber_setter?(child, prop)
+    !!(child.decorator.method(:prop_set).owner != method(:prop_set).owner &&
+       child.instance_method("#{prop}=").source_location&.first == __FILE__)
   end
 
   sig {params(mod: Module).void.checked(:never)}

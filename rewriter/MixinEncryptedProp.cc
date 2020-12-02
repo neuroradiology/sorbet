@@ -9,7 +9,9 @@ using namespace std;
 
 namespace sorbet::rewriter {
 
-unique_ptr<ast::Expression> mkNilableEncryptedValue(core::MutableContext ctx, core::Loc loc) {
+namespace {
+
+ast::TreePtr mkNilableEncryptedValue(core::MutableContext ctx, core::LocOffsets loc) {
     auto opus = ast::MK::UnresolvedConstant(loc, ast::MK::EmptyTree(), core::Names::Constants::Opus());
     auto db = ast::MK::UnresolvedConstant(loc, move(opus), core::Names::Constants::DB());
     auto model = ast::MK::UnresolvedConstant(loc, move(db), core::Names::Constants::Model());
@@ -19,20 +21,22 @@ unique_ptr<ast::Expression> mkNilableEncryptedValue(core::MutableContext ctx, co
     return ASTUtil::mkNilable(loc, move(ev));
 }
 
-unique_ptr<ast::Expression> mkNilableString(core::Loc loc) {
+ast::TreePtr mkNilableString(core::LocOffsets loc) {
     return ASTUtil::mkNilable(loc, ast::MK::Constant(loc, core::Symbols::String()));
 }
 
-vector<unique_ptr<ast::Expression>> MixinEncryptedProp::run(core::MutableContext ctx, ast::Send *send) {
-    vector<unique_ptr<ast::Expression>> empty;
+} // namespace
+
+vector<ast::TreePtr> MixinEncryptedProp::run(core::MutableContext ctx, ast::Send *send) {
+    vector<ast::TreePtr> empty;
 
     if (ctx.state.runningUnderAutogen) {
         return empty;
     }
 
     bool isImmutable = false; // Are there no setters?
-    core::NameRef name = core::NameRef::noName();
-    core::NameRef enc_name = core::NameRef::noName();
+    core::NameRef name;
+    core::NameRef enc_name;
 
     if (send->fun._id != core::Names::encryptedProp()._id) {
         return empty;
@@ -42,66 +46,48 @@ vector<unique_ptr<ast::Expression>> MixinEncryptedProp::run(core::MutableContext
     }
 
     auto loc = send->loc;
-    auto *sym = ast::cast_tree<ast::Literal>(send->args[0].get());
+    auto *sym = ast::cast_tree<ast::Literal>(send->args[0]);
     if (!sym || !sym->isSymbol(ctx)) {
         return empty;
     }
     name = sym->asSymbol(ctx);
-    ENFORCE(sym->loc.source(ctx).size() > 1 && sym->loc.source(ctx)[0] == ':');
-    auto nameLoc = core::Loc(sym->loc.file(), sym->loc.beginPos() + 1, sym->loc.endPos());
+    ENFORCE(core::Loc(ctx.file, sym->loc).source(ctx).size() > 1 &&
+            core::Loc(ctx.file, sym->loc).source(ctx)[0] == ':');
+    auto nameLoc = core::LocOffsets{sym->loc.beginPos() + 1, sym->loc.endPos()};
     enc_name = name.prepend(ctx, "encrypted_");
 
-    ast::Hash *rules = nullptr;
+    ast::TreePtr rules;
     if (!send->args.empty()) {
-        rules = ast::cast_tree<ast::Hash>(send->args.back().get());
+        rules = ASTUtil::mkKwArgsHash(send);
     }
 
-    if (rules) {
-        if (ASTUtil::hasTruthyHashValue(ctx, *rules, core::Names::immutable())) {
+    if (auto *hash = ast::cast_tree<ast::Hash>(rules)) {
+        if (ASTUtil::hasTruthyHashValue(ctx, *hash, core::Names::immutable())) {
             isImmutable = true;
         }
     }
 
-    vector<unique_ptr<ast::Expression>> stats;
+    vector<ast::TreePtr> stats;
 
     // Compute the getters
 
-    stats.emplace_back(ast::MK::Sig(loc, ast::MK::Hash0(loc), mkNilableString(loc)));
-    stats.emplace_back(ASTUtil::mkGet(loc, name, ast::MK::Cast(loc, mkNilableString(loc))));
+    stats.emplace_back(ast::MK::Sig(loc, {}, mkNilableString(loc)));
+    stats.emplace_back(ASTUtil::mkGet(ctx, loc, name, ast::MK::RaiseUnimplemented(loc)));
 
-    stats.emplace_back(ast::MK::Sig(loc, ast::MK::Hash0(loc), mkNilableEncryptedValue(ctx, loc)));
-    stats.emplace_back(ASTUtil::mkGet(loc, enc_name, ast::MK::Cast(loc, mkNilableEncryptedValue(ctx, loc))));
+    stats.emplace_back(ast::MK::Sig(loc, {}, mkNilableEncryptedValue(ctx, loc)));
+    stats.emplace_back(ASTUtil::mkGet(ctx, loc, enc_name, ast::MK::RaiseUnimplemented(loc)));
     core::NameRef setName = name.addEq(ctx);
     core::NameRef setEncName = enc_name.addEq(ctx);
 
     // Compute the setter
     if (!isImmutable) {
-        stats.emplace_back(
-            ast::MK::Sig(loc, ast::MK::Hash1(loc, ast::MK::Symbol(nameLoc, core::Names::arg0()), mkNilableString(loc)),
-                         mkNilableString(loc)));
-        stats.emplace_back(ASTUtil::mkSet(loc, setName, nameLoc, ast::MK::Cast(loc, mkNilableString(loc))));
+        stats.emplace_back(ast::MK::Sig1(loc, ast::MK::Symbol(nameLoc, core::Names::arg0()), mkNilableString(loc),
+                                         mkNilableString(loc)));
+        stats.emplace_back(ASTUtil::mkSet(ctx, loc, setName, nameLoc, ast::MK::RaiseUnimplemented(loc)));
 
-        stats.emplace_back(ast::MK::Sig(
-            loc, ast::MK::Hash1(loc, ast::MK::Symbol(nameLoc, core::Names::arg0()), mkNilableEncryptedValue(ctx, loc)),
-            mkNilableEncryptedValue(ctx, loc)));
-        stats.emplace_back(
-            ASTUtil::mkSet(loc, setEncName, nameLoc, ast::MK::Cast(loc, mkNilableEncryptedValue(ctx, loc))));
-    }
-
-    // Compute the Mutator
-    {
-        // Compute a setter
-        ast::ClassDef::RHS_store rhs;
-        rhs.emplace_back(
-            ast::MK::Sig(loc, ast::MK::Hash1(nameLoc, ast::MK::Symbol(loc, core::Names::arg0()), mkNilableString(loc)),
-                         mkNilableString(loc)));
-        rhs.emplace_back(ASTUtil::mkSet(loc, setName, nameLoc, ast::MK::Cast(loc, mkNilableString(loc))));
-
-        rhs.emplace_back(ast::MK::Sig(
-            loc, ast::MK::Hash1(loc, ast::MK::Symbol(nameLoc, core::Names::arg0()), mkNilableEncryptedValue(ctx, loc)),
-            mkNilableEncryptedValue(ctx, loc)));
-        rhs.emplace_back(
-            ASTUtil::mkSet(loc, setEncName, nameLoc, ast::MK::Cast(loc, mkNilableEncryptedValue(ctx, loc))));
+        stats.emplace_back(ast::MK::Sig1(loc, ast::MK::Symbol(nameLoc, core::Names::arg0()),
+                                         mkNilableEncryptedValue(ctx, loc), mkNilableEncryptedValue(ctx, loc)));
+        stats.emplace_back(ASTUtil::mkSet(ctx, loc, setEncName, nameLoc, ast::MK::RaiseUnimplemented(loc)));
     }
 
     return stats;

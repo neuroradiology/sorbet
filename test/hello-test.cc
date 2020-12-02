@@ -1,4 +1,4 @@
-#include "gtest/gtest.h"
+#include "doctest.h"
 #include <cxxopts.hpp>
 // has to go first as it violates our requirements
 
@@ -25,107 +25,104 @@ auto errorQueue = make_shared<sorbet::core::ErrorQueue>(*logger, *logger);
 
 namespace sorbet {
 
-TEST(HelloTest, GetGreet) { // NOLINT
-    EXPECT_EQ("Hello Bazel", "Hello Bazel");
-}
-
 namespace spd = spdlog;
 
-TEST(HelloTest, GetSpdlog) { // NOLINT
+TEST_CASE("GetGreet") {
+    CHECK_EQ("Hello Bazel", "Hello Bazel");
+}
+
+TEST_CASE("GetSpdlog") {
     logger->info("Welcome to spdlog!");
 }
 
-TEST(HelloTest, GetCXXopts) { // NOLINT
+TEST_CASE("GetCXXopts") {
     cxxopts::Options options("MyProgram", "One line description of MyProgram");
 }
 
-TEST(PreOrderTreeMap, CountTrees) { // NOLINT
+TEST_CASE("CountTrees") {
     class Counter {
     public:
         int count = 0;
-        unique_ptr<ast::ClassDef> preTransformClassDef(core::MutableContext ctx, unique_ptr<ast::ClassDef> original) {
+        ast::TreePtr preTransformClassDef(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
-        unique_ptr<ast::MethodDef> preTransformMethodDef(core::MutableContext ctx,
-                                                         unique_ptr<ast::MethodDef> original) {
-            count++;
-            return original;
-        }
-
-        unique_ptr<ast::If> preTransformIf(core::MutableContext ctx, unique_ptr<ast::If> original) {
+        ast::TreePtr preTransformMethodDef(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::While> preTransformWhile(core::MutableContext ctx, unique_ptr<ast::While> original) {
+        ast::TreePtr preTransformIf(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::Break> postTransformBreak(core::MutableContext ctx, unique_ptr<ast::Break> original) {
+        ast::TreePtr preTransformWhile(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::Next> postTransformNext(core::MutableContext ctx, unique_ptr<ast::Next> original) {
+        ast::TreePtr postTransformBreak(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::Return> preTransformReturn(core::MutableContext ctx, unique_ptr<ast::Return> original) {
+        ast::TreePtr postTransformNext(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::Rescue> preTransformRescue(core::MutableContext ctx, unique_ptr<ast::Rescue> original) {
+        ast::TreePtr preTransformReturn(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::ConstantLit> postTransformConstantLit(core::MutableContext ctx,
-                                                              unique_ptr<ast::ConstantLit> original) {
+        ast::TreePtr preTransformRescue(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::Assign> preTransformAssign(core::MutableContext ctx, unique_ptr<ast::Assign> original) {
+        ast::TreePtr postTransformConstantLit(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::Send> preTransformSend(core::MutableContext ctx, unique_ptr<ast::Send> original) {
+        ast::TreePtr preTransformAssign(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::Hash> preTransformHash(core::MutableContext ctx, unique_ptr<ast::Hash> original) {
+        ast::TreePtr preTransformSend(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::Array> preTransformArray(core::MutableContext ctx, unique_ptr<ast::Array> original) {
+        ast::TreePtr preTransformHash(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::Literal> postTransformLiteral(core::MutableContext ctx, unique_ptr<ast::Literal> original) {
+        ast::TreePtr preTransformArray(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::UnresolvedConstantLit>
-        postTransformUnresolvedConstantLit(core::MutableContext ctx, unique_ptr<ast::UnresolvedConstantLit> original) {
+        ast::TreePtr postTransformLiteral(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::Block> preTransformBlock(core::MutableContext ctx, unique_ptr<ast::Block> original) {
+        ast::TreePtr postTransformUnresolvedConstantLit(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
 
-        unique_ptr<ast::InsSeq> preTransformInsSeq(core::MutableContext ctx, unique_ptr<ast::InsSeq> original) {
+        ast::TreePtr preTransformBlock(core::MutableContext ctx, ast::TreePtr original) {
+            count++;
+            return original;
+        }
+
+        ast::TreePtr preTransformInsSeq(core::MutableContext ctx, ast::TreePtr original) {
             count++;
             return original;
         }
@@ -133,47 +130,47 @@ TEST(PreOrderTreeMap, CountTrees) { // NOLINT
 
     sorbet::core::GlobalState cb(errorQueue);
     cb.initEmpty();
-    sorbet::core::MutableContext ctx(cb, core::Symbols::root());
     static constexpr string_view foo_str = "Foo"sv;
     sorbet::core::Loc loc(sorbet::core::FileRef(), 42, 91);
-    sorbet::core::UnfreezeNameTable nt(ctx);
-    sorbet::core::UnfreezeSymbolTable st(ctx);
+    sorbet::core::UnfreezeNameTable nt(cb);
+    sorbet::core::UnfreezeSymbolTable st(cb);
 
-    auto name = ctx.state.enterNameUTF8(foo_str);
-    auto classSym = ctx.state.enterClassSymbol(loc, sorbet::core::Symbols::root(), ctx.state.enterNameConstant(name));
-
-    // see if it crashes via failed ENFORCE
-    ctx.state.enterTypeMember(loc, classSym, ctx.state.enterNameConstant(name), sorbet::core::Variance::CoVariant);
-    auto methodSym = ctx.state.enterMethodSymbol(loc, classSym, name);
+    auto name = cb.enterNameUTF8(foo_str);
+    auto classSym = cb.enterClassSymbol(loc, sorbet::core::Symbols::root(), cb.enterNameConstant(name));
 
     // see if it crashes via failed ENFORCE
-    ctx.state.enterTypeArgument(loc, methodSym, ctx.state.enterNameConstant(name), sorbet::core::Variance::CoVariant);
+    cb.enterTypeMember(loc, classSym, cb.enterNameConstant(name), sorbet::core::Variance::CoVariant);
+    auto methodSym = cb.enterMethodSymbol(loc, classSym, name);
+
+    // see if it crashes via failed ENFORCE
+    cb.enterTypeArgument(loc, methodSym, cb.enterNameConstant(name), sorbet::core::Variance::CoVariant);
 
     auto empty = vector<core::SymbolRef>();
     auto argumentSym = core::LocalVariable(name, 0);
-    unique_ptr<ast::Expression> rhs(ast::MK::Int(loc, 5));
-    unique_ptr<ast::Expression> arg = make_unique<ast::Local>(loc, argumentSym);
+    auto rhs(ast::MK::Int(loc.offsets(), 5));
+    auto arg = ast::make_tree<ast::Local>(loc.offsets(), argumentSym);
     ast::MethodDef::ARGS_store args;
     args.emplace_back(std::move(arg));
 
     ast::MethodDef::Flags flags;
-    unique_ptr<ast::Expression> methodDef =
-        make_unique<ast::MethodDef>(loc, loc, methodSym, name, std::move(args), std::move(rhs), flags);
-    unique_ptr<ast::Expression> emptyTree = ast::MK::EmptyTree();
-    unique_ptr<ast::Expression> cnst = make_unique<ast::UnresolvedConstantLit>(loc, std::move(emptyTree), name);
+    auto methodDef = ast::make_tree<ast::MethodDef>(loc.offsets(), loc.offsets(), methodSym, name, std::move(args),
+                                                    std::move(rhs), flags);
+    auto emptyTree = ast::MK::EmptyTree();
+    auto cnst = ast::make_tree<ast::UnresolvedConstantLit>(loc.offsets(), std::move(emptyTree), name);
 
     ast::ClassDef::RHS_store classrhs;
     classrhs.emplace_back(std::move(methodDef));
-    unique_ptr<ast::Expression> tree =
-        make_unique<ast::ClassDef>(loc, loc, classSym, std::move(cnst), ast::ClassDef::ANCESTORS_store(),
-                                   std::move(classrhs), ast::ClassDef::Kind::Class);
+    auto tree = ast::make_tree<ast::ClassDef>(loc.offsets(), loc.offsets(), classSym, std::move(cnst),
+                                              ast::ClassDef::ANCESTORS_store(), std::move(classrhs),
+                                              ast::ClassDef::Kind::Class);
     Counter c;
+    sorbet::core::MutableContext ctx(cb, core::Symbols::root(), loc.file());
 
     auto r = ast::TreeMap::apply(ctx, c, std::move(tree));
-    EXPECT_EQ(c.count, 3);
+    CHECK_EQ(c.count, 3);
 }
 
-TEST(PayloadTests, CloneSubstitutePayload) {
+TEST_CASE("CloneSubstitutePayload") {
     auto logger = spd::stderr_color_mt("ClonePayload");
     auto errorQueue = make_shared<sorbet::core::ErrorQueue>(*logger, *logger);
 
@@ -190,8 +187,8 @@ TEST(PayloadTests, CloneSubstitutePayload) {
     }
 
     sorbet::core::GlobalSubstitution subst(*c1, *c2);
-    ASSERT_EQ("<U test new name>", subst.substitute(n1).showRaw(*c2));
-    ASSERT_EQ(c1->symbolsUsed(), c2->symbolsUsed());
-    ASSERT_EQ(c1->symbolsUsed(), gs.symbolsUsed());
+    REQUIRE_EQ("<U test new name>", subst.substitute(n1).showRaw(*c2));
+    REQUIRE_EQ(c1->symbolsUsedTotal(), c2->symbolsUsedTotal());
+    REQUIRE_EQ(c1->symbolsUsedTotal(), gs.symbolsUsedTotal());
 }
 } // namespace sorbet

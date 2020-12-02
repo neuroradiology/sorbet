@@ -22,12 +22,17 @@ module T::Types
     end
 
     # @override Base
-    def valid?(obj)
+    def recursively_valid?(obj)
       obj.is_a?(Hash) && super
     end
 
-    def new(*args, &blk) # rubocop:disable PrisonGuard/BanBuiltinMethodOverride
-      Hash.new(*T.unsafe(args), &blk) # rubocop:disable PrisonGuard/RestrictHashDefaults
+    # @override Base
+    def valid?(obj)
+      obj.is_a?(Hash)
+    end
+
+    def new(*args, &blk)
+      Hash.new(*T.unsafe(args), &blk)
     end
 
     class Untyped < TypedHash

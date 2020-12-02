@@ -1,5 +1,6 @@
 # typed: true
 
 class Foo::MyModel
-  prop :array_of_explicit, Array, array: String
+  include T::Props
+  prop :array_of_explicit, T::Array[String]
 end

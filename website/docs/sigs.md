@@ -120,14 +120,14 @@ sig do
   params(
     # Integer describes a single element of args
     args: Integer, # rest positional params
-    # Float describes a single value of args
+    # Float describes a single value of kwargs
     kwargs: Float  # rest keyword params
   )
   .void
 end
 def self.main(*args, **kwargs)
   # Positional rest args become an Array in the method body:
-  T.reveal_type(rest) # => Revealed type: `T::Array[Integer]`
+  T.reveal_type(args) # => Revealed type: `T::Array[Integer]`
 
   # Keyword rest args become a Hash in the method body:
   T.reveal_type(kwargs) # => Revealed: type `T::Hash[Symbol, Float]`
@@ -249,6 +249,42 @@ end
 # (3) It's an error to pass a void result to name_length:
 Main.name_length(Main.greet('Alice')) # => error!
 ```
+
+## Adding sigs to class methods
+
+There are many ways to define class (static) methods in Ruby. How a method is
+defined changes where the `extend T::Sig` line needs to go. These are the two
+preferred ways to define class methods with sigs:
+
+1.  `def self.greet`
+
+    ```ruby
+    class Main
+      # In this style, at the top level of the class
+      extend T::Sig
+
+      sig {params(name: String).void}
+      def self.greet(name)
+        puts "Hello, #{name}!"
+      end
+    end
+    ```
+
+2.  `class << self`
+
+    ```ruby
+    class Main
+      class << self
+        # In this style, inside the `class << self`
+        extend T::Sig
+
+        sig {params(name: String).void}
+        def greet(name)
+          # ...
+        end
+      end
+    end
+    ```
 
 ## Why do we need signatures?
 

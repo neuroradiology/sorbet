@@ -4,24 +4,24 @@ begin
     def self.<static-init><<static-init>$CENSORED>(<blk>)
       begin
         begin
-          <emptyTree>
+          ::<Magic>.<define-top-class-or-module>(::Parent)
           ::Sorbet::Private::Static.keep_for_ide(::Parent)
           <emptyTree>
         end
         begin
-          <emptyTree>
+          ::<Magic>.<define-top-class-or-module>(::Mixin)
           ::Sorbet::Private::Static.keep_for_ide(::Mixin)
           <emptyTree>
         end
         begin
-          <emptyTree>
+          ::<Magic>.<define-top-class-or-module>(::Child)
           ::Sorbet::Private::Static.keep_for_ide(::Child)
           ::Sorbet::Private::Static.keep_for_ide(::Parent)
           <emptyTree>
         end
         ::Alias = ::Parent
         begin
-          <emptyTree>
+          ::<Magic>.<define-top-class-or-module>(::Child1)
           ::Sorbet::Private::Static.keep_for_ide(::Child1)
           ::Sorbet::Private::Static.keep_for_ide(::Alias)
           <emptyTree>
@@ -53,12 +53,12 @@ begin
 
     def self.<static-init>(<blk>)
       begin
-        ::Sorbet::Private::Static.keep_def(<self>, :"initialize")
+        ::Sorbet::Private::Static.keep_def(<self>, :initialize)
         @@class_var = begin
           ::Sorbet::Private::Static.keep_for_typechecking(::String)
           T.let("hi", String)
         end
-        ::Sorbet::Private::Static.keep_def(<self>, :"hi")
+        ::Sorbet::Private::Static.keep_def(<self>, :hi)
         <emptyTree>
       end
     end
@@ -91,7 +91,7 @@ begin
         @@class_var
         @@mixin_cvar
         @@undefined_cvar
-        ::Sorbet::Private::Static.keep_def(<self>, :"child_method")
+        ::Sorbet::Private::Static.keep_def(<self>, :child_method)
         <emptyTree>
       end
     end

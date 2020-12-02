@@ -18,7 +18,6 @@ class NameRef;
 class Symbol;
 class SymbolRef;
 class GlobalSubstitution;
-class ErrorRegion;
 class ErrorQueue;
 struct GlobalStateHash;
 
@@ -40,7 +39,6 @@ class GlobalState final {
     friend File;
     friend FileRef;
     friend GlobalSubstitution;
-    friend ErrorRegion;
     friend ErrorBuilder;
     friend serialize::Serializer;
     friend serialize::SerializerImpl;
@@ -53,12 +51,21 @@ public:
     GlobalState(std::shared_ptr<ErrorQueue> errorQueue);
     GlobalState(std::shared_ptr<ErrorQueue> errorQueue, std::shared_ptr<lsp::TypecheckEpochManager> epochManager);
 
+    // Empirically determined to be the smallest powers of two larger than the
+    // values required by the payload. Enforced in payload.cc.
+    static constexpr unsigned int PAYLOAD_MAX_NAME_COUNT = 32768;
+    static constexpr unsigned int PAYLOAD_MAX_CLASS_AND_MODULE_COUNT = 8192;
+    static constexpr unsigned int PAYLOAD_MAX_METHOD_COUNT = 32768;
+    static constexpr unsigned int PAYLOAD_MAX_FIELD_COUNT = 4096;
+    static constexpr unsigned int PAYLOAD_MAX_TYPE_ARGUMENT_COUNT = 256;
+    static constexpr unsigned int PAYLOAD_MAX_TYPE_MEMBER_COUNT = 4096;
+
     void initEmpty();
     void installIntrinsics();
 
-    // Expand tables to use approximate `kb` KiB of memory. Can be used prior to
-    // operation to avoid table resizes.
-    void reserveMemory(u4 kb);
+    // Expand symbol and name tables to the given lengths. Does nothing if the value is <= current capacity.
+    void preallocateTables(u4 classAndModulesSize, u4 methodsSize, u4 fieldsSize, u4 typeArgumentsSize,
+                           u4 typeMembersSize, u4 nameSize);
 
     GlobalState(const GlobalState &) = delete;
     GlobalState(GlobalState &&) = delete;
@@ -69,27 +76,30 @@ public:
     SymbolRef enterTypeMember(Loc loc, SymbolRef owner, NameRef name, Variance variance);
     SymbolRef enterTypeArgument(Loc loc, SymbolRef owner, NameRef name, Variance variance);
     SymbolRef enterMethodSymbol(Loc loc, SymbolRef owner, NameRef name);
-    SymbolRef enterNewMethodOverload(Loc loc, SymbolRef original, core::NameRef originalName, u2 num,
+    SymbolRef enterNewMethodOverload(Loc loc, SymbolRef original, core::NameRef originalName, u4 num,
                                      const std::vector<int> &argsToKeep);
     SymbolRef enterFieldSymbol(Loc loc, SymbolRef owner, NameRef name);
     SymbolRef enterStaticFieldSymbol(Loc loc, SymbolRef owner, NameRef name);
     ArgInfo &enterMethodArgumentSymbol(Loc loc, SymbolRef owner, NameRef name);
 
-    SymbolRef lookupSymbol(SymbolRef owner, NameRef name) {
+    SymbolRef lookupSymbol(SymbolRef owner, NameRef name) const {
         return lookupSymbolWithFlags(owner, name, 0);
     }
-    SymbolRef lookupTypeMemberSymbol(SymbolRef owner, NameRef name) {
+    SymbolRef lookupTypeMemberSymbol(SymbolRef owner, NameRef name) const {
         return lookupSymbolWithFlags(owner, name, Symbol::Flags::TYPE_MEMBER);
     }
-    SymbolRef lookupClassSymbol(SymbolRef owner, NameRef name) {
+    SymbolRef lookupClassSymbol(SymbolRef owner, NameRef name) const {
         return lookupSymbolWithFlags(owner, name, Symbol::Flags::CLASS_OR_MODULE);
     }
-    SymbolRef lookupMethodSymbol(SymbolRef owner, NameRef name) {
+    SymbolRef lookupMethodSymbol(SymbolRef owner, NameRef name) const {
         return lookupSymbolWithFlags(owner, name, Symbol::Flags::METHOD);
     }
-    SymbolRef lookupMethodSymbolWithHash(SymbolRef owner, NameRef name, std::vector<u4> methodHash) const;
-    SymbolRef lookupStaticFieldSymbol(SymbolRef owner, NameRef name) {
+    SymbolRef lookupMethodSymbolWithHash(SymbolRef owner, NameRef name, const std::vector<u4> &methodHash) const;
+    SymbolRef lookupStaticFieldSymbol(SymbolRef owner, NameRef name) const {
         return lookupSymbolWithFlags(owner, name, Symbol::Flags::STATIC_FIELD);
+    }
+    SymbolRef lookupFieldSymbol(SymbolRef owner, NameRef name) const {
+        return lookupSymbolWithFlags(owner, name, Symbol::Flags::FIELD);
     }
     SymbolRef findRenamedSymbol(SymbolRef owner, SymbolRef name) const;
 
@@ -102,11 +112,13 @@ public:
     NameRef enterNameUTF8(std::string_view nm);
     NameRef lookupNameUTF8(std::string_view nm) const;
 
-    NameRef lookupNameUnique(UniqueNameKind uniqueNameKind, NameRef original, u2 num) const;
-    NameRef freshNameUnique(UniqueNameKind uniqueNameKind, NameRef original, u2 num);
+    NameRef lookupNameUnique(UniqueNameKind uniqueNameKind, NameRef original, u4 num) const;
+    NameRef freshNameUnique(UniqueNameKind uniqueNameKind, NameRef original, u4 num);
 
     NameRef enterNameConstant(NameRef original);
     NameRef enterNameConstant(std::string_view original);
+    NameRef lookupNameConstant(NameRef original) const;
+    NameRef lookupNameConstant(std::string_view original) const;
 
     FileRef enterFile(std::string_view path, std::string_view source);
     FileRef enterFile(const std::shared_ptr<File> &file);
@@ -121,8 +133,13 @@ public:
     spdlog::logger &tracer() const;
     unsigned int namesUsed() const;
 
-    unsigned int symbolsUsed() const;
+    unsigned int classAndModulesUsed() const;
+    unsigned int methodsUsed() const;
+    unsigned int fieldsUsed() const;
+    unsigned int typeArgumentsUsed() const;
+    unsigned int typeMembersUsed() const;
     unsigned int filesUsed() const;
+    unsigned int symbolsUsedTotal() const;
 
     void sanityCheck() const;
     void markAsPayload();
@@ -161,7 +178,6 @@ public:
     int globalStateId;
     bool silenceErrors = false;
     bool autocorrect = false;
-    bool suggestRuntimeProfiledType = false;
 
     // We have a lot of internal names of form `<something>` that's chosen with `<` and `>` as you can't make
     // this into a valid ruby identifier without suffering.
@@ -191,6 +207,9 @@ public:
     // See ErrorQueue#queryResponse
     lsp::Query lspQuery;
 
+    // Stores a UUID that uniquely identifies this GlobalState in kvstore.
+    u4 kvstoreUuid = 0;
+
     FlowId creation; // used to track flow of global states
 
     // Indicates the number of times LSP has run the type checker with this global state.
@@ -207,6 +226,11 @@ public:
     // Contains a string to be used as the base of the error URL.
     // The error code is appended to this string.
     std::string errorUrlBase;
+
+    // If 'true', enforce use of Ruby 3.0-style keyword args.
+    bool ruby3KeywordArgs = false;
+
+    void ignoreErrorClassForSuggestTyped(int code);
     void suppressErrorClass(int code);
     void onlyShowErrorClass(int code);
 
@@ -231,9 +255,14 @@ private:
     u2 stringsLastPageUsed = STRINGS_PAGE_SIZE + 1;
     std::vector<Name> names;
     UnorderedMap<std::string, FileRef> fileRefByPath;
-    std::vector<Symbol> symbols;
+    std::vector<Symbol> classAndModules;
+    std::vector<Symbol> methods;
+    std::vector<Symbol> fields;
+    std::vector<Symbol> typeMembers;
+    std::vector<Symbol> typeArguments;
     std::vector<std::pair<unsigned int, unsigned int>> namesByHash;
     std::vector<std::shared_ptr<File>> files;
+    UnorderedSet<int> ignoredForSuggestTypedErrorClasses;
     UnorderedSet<int> suppressedErrorClasses;
     UnorderedSet<int> onlyErrorClasses;
     UnorderedMap<NameRef, std::string> dslPlugins;
@@ -249,10 +278,10 @@ private:
     bool symbolTableFrozen = true;
     bool fileTableFrozen = true;
 
-    void expandNames(int growBy = 2);
+    void expandNames(u4 newSize);
 
-    SymbolRef synthesizeClass(NameRef nameID, u4 superclass = Symbols::todo()._id, bool isModule = false);
-    SymbolRef enterSymbol(Loc loc, SymbolRef owner, NameRef name, u4 flags);
+    SymbolRef synthesizeClass(NameRef nameID, u4 superclass = Symbols::todo().classOrModuleIndex(),
+                              bool isModule = false);
 
     SymbolRef lookupSymbolSuchThat(SymbolRef owner, NameRef name, std::function<bool(SymbolRef)> pred) const;
     SymbolRef lookupSymbolWithFlags(SymbolRef owner, NameRef name, u4 flags) const;

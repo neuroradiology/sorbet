@@ -38,13 +38,16 @@ class Opus::Types::Test::TypesToRubyTest < Critic::Unit::UnitTest
     [T.nilable(T::Hash[String, String]), "T.nilable(T::Hash[String, String])"],
 
     # Enum:
-    [T.enum(["a", "b", "c"]), 'T.enum(["a", "b", "c"])'],
+    [T.enum(%w[a b c]), 'T.enum(["a", "b", "c"])'],
 
     # Range:
     [T::Range[Integer], "T::Range[Integer]"],
 
     # Set:
     [T::Set[Integer], "T::Set[Integer]"],
+
+    # T.type_parameter:
+    [T.type_parameter(:A), "T.type_parameter(:A)"],
   ]
 
   cases.each do |c|

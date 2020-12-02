@@ -27,10 +27,16 @@ class SerializerImpl;
 }
 class IntrinsicMethod {
 public:
-    virtual void apply(Context ctx, DispatchArgs args, const Type *thisType, DispatchResult &res) const = 0;
+    virtual void apply(const GlobalState &gs, const DispatchArgs &args, DispatchResult &res) const = 0;
 };
 
 enum class Variance { CoVariant = 1, ContraVariant = -1, Invariant = 0 };
+
+enum class Visibility : u1 {
+    Public = 1,
+    Protected,
+    Private,
+};
 
 class Symbol final {
 public:
@@ -77,6 +83,7 @@ public:
         static constexpr u4 CLASS_OR_MODULE_LINEARIZATION_COMPUTED = 0x0000'0100;
         static constexpr u4 CLASS_OR_MODULE_FINAL = 0x0000'0200;
         static constexpr u4 CLASS_OR_MODULE_SEALED = 0x0000'0400;
+        static constexpr u4 CLASS_OR_MODULE_PRIVATE = 0x0000'0800;
 
         // Method flags
         static constexpr u4 METHOD_PROTECTED = 0x0000'0010;
@@ -99,6 +106,7 @@ public:
 
         // Static Field flags
         static constexpr u4 STATIC_FIELD_TYPE_ALIAS = 0x0000'0010;
+        static constexpr u4 STATIC_FIELD_PRIVATE = 0x0000'0020;
     };
 
     Loc loc() const;
@@ -115,23 +123,26 @@ public:
     // (which must be isClassOrModule()), if instantiated without specific type
     // parameters, as seen from inside or outside of the class, respectively.
     TypePtr selfType(const GlobalState &gs) const;
-    TypePtr externalType(const GlobalState &gs) const;
+    TypePtr externalType() const;
+
+    // !! THREAD UNSAFE !! operation that computes the external type of this symbol.
+    // Do not call this method from multi-threaded contexts (which, honestly, shouldn't
+    // have access to a mutable GlobalState and thus shouldn't be able to call it).
+    TypePtr unsafeComputeExternalType(GlobalState &gs);
 
     inline InlinedVector<SymbolRef, 4> &mixins() {
-        ENFORCE(isClassOrModule());
+        ENFORCE_NO_TIMER(isClassOrModule());
         return mixins_;
     }
 
     inline const InlinedVector<SymbolRef, 4> &mixins() const {
-        ENFORCE(isClassOrModule());
+        ENFORCE_NO_TIMER(isClassOrModule());
         return mixins_;
     }
 
-    void addMixin(SymbolRef sym) {
-        ENFORCE(isClassOrModule());
-        mixins_.emplace_back(sym);
-        unsetClassLinearizationComputed();
-    }
+    // Attempts to add the given mixin to the symbol. If the mixin is invalid because it is not a module, it returns
+    // `false` (but still adds the mixin for processing during linearization) and the caller should report an error.
+    [[nodiscard]] bool addMixin(const GlobalState &gs, SymbolRef sym);
 
     inline InlinedVector<SymbolRef, 4> &typeMembers() {
         ENFORCE(isClassOrModule());
@@ -190,52 +201,52 @@ public:
     }
 
     inline bool isOverloaded() const {
-        ENFORCE(isMethod());
+        ENFORCE_NO_TIMER(isMethod());
         return (flags & Symbol::Flags::METHOD_OVERLOADED) != 0;
     }
 
     inline bool isAbstract() const {
-        ENFORCE(isMethod());
+        ENFORCE_NO_TIMER(isMethod());
         return (flags & Symbol::Flags::METHOD_ABSTRACT) != 0;
     }
 
     inline bool isIncompatibleOverride() const {
-        ENFORCE(isMethod());
+        ENFORCE_NO_TIMER(isMethod());
         return (flags & Symbol::Flags::METHOD_INCOMPATIBLE_OVERRIDE) != 0;
     }
 
     inline bool isGenericMethod() const {
-        ENFORCE(isMethod());
+        ENFORCE_NO_TIMER(isMethod());
         return (flags & Symbol::Flags::METHOD_GENERIC) != 0;
     }
 
     inline bool isOverridable() const {
-        ENFORCE(isMethod());
+        ENFORCE_NO_TIMER(isMethod());
         return (flags & Symbol::Flags::METHOD_OVERRIDABLE) != 0;
     }
 
     inline bool isOverride() const {
-        ENFORCE(isMethod());
+        ENFORCE_NO_TIMER(isMethod());
         return (flags & Symbol::Flags::METHOD_OVERRIDE) != 0;
     }
 
     inline bool isCovariant() const {
-        ENFORCE(isTypeArgument() || isTypeMember());
+        ENFORCE_NO_TIMER(isTypeArgument() || isTypeMember());
         return (flags & Symbol::Flags::TYPE_COVARIANT) != 0;
     }
 
     inline bool isInvariant() const {
-        ENFORCE(isTypeArgument() || isTypeMember());
+        ENFORCE_NO_TIMER(isTypeArgument() || isTypeMember());
         return (flags & Symbol::Flags::TYPE_INVARIANT) != 0;
     }
 
     inline bool isContravariant() const {
-        ENFORCE(isTypeArgument() || isTypeMember());
+        ENFORCE_NO_TIMER(isTypeArgument() || isTypeMember());
         return (flags & Symbol::Flags::TYPE_CONTRAVARIANT) != 0;
     }
 
     inline bool isFixed() const {
-        ENFORCE(isTypeArgument() || isTypeMember());
+        ENFORCE_NO_TIMER(isTypeArgument() || isTypeMember());
         return (flags & Symbol::Flags::TYPE_FIXED) != 0;
     }
 
@@ -249,23 +260,35 @@ public:
         Exception::raise("Should not happen");
     }
 
-    inline bool isPublic() const {
-        ENFORCE(isMethod());
-        return !isProtected() && !isPrivate();
+    inline bool isMethodPublic() const {
+        ENFORCE_NO_TIMER(isMethod());
+        return !isMethodProtected() && !isMethodPrivate();
     }
 
-    inline bool isProtected() const {
-        ENFORCE(isMethod());
+    inline bool isMethodProtected() const {
+        ENFORCE_NO_TIMER(isMethod());
         return (flags & Symbol::Flags::METHOD_PROTECTED) != 0;
     }
 
-    inline bool isPrivate() const {
-        ENFORCE(isMethod());
+    inline bool isMethodPrivate() const {
+        ENFORCE_NO_TIMER(isMethod());
         return (flags & Symbol::Flags::METHOD_PRIVATE) != 0;
     }
 
+    Visibility methodVisibility() const {
+        if (this->isMethodPublic()) {
+            return Visibility::Public;
+        } else if (this->isMethodProtected()) {
+            return Visibility::Protected;
+        } else if (this->isMethodPrivate()) {
+            return Visibility::Private;
+        } else {
+            Exception::raise("Expected method to have visibility");
+        }
+    }
+
     inline bool isClassOrModuleModule() const {
-        ENFORCE(isClassOrModule());
+        ENFORCE_NO_TIMER(isClassOrModule());
         if (flags & Symbol::Flags::CLASS_OR_MODULE_MODULE)
             return true;
         if (flags & Symbol::Flags::CLASS_OR_MODULE_CLASS)
@@ -274,7 +297,7 @@ public:
     }
 
     inline bool isClassModuleSet() const {
-        ENFORCE(isClassOrModule());
+        ENFORCE_NO_TIMER(isClassOrModule());
         return flags & (Symbol::Flags::CLASS_OR_MODULE_MODULE | Symbol::Flags::CLASS_OR_MODULE_CLASS);
     }
 
@@ -288,23 +311,33 @@ public:
     }
 
     inline bool isClassOrModuleInterface() const {
-        ENFORCE(isClassOrModule());
+        ENFORCE_NO_TIMER(isClassOrModule());
         return (flags & Symbol::Flags::CLASS_OR_MODULE_INTERFACE) != 0;
     }
 
     inline bool isClassOrModuleLinearizationComputed() const {
-        ENFORCE(isClassOrModule());
+        ENFORCE_NO_TIMER(isClassOrModule());
         return (flags & Symbol::Flags::CLASS_OR_MODULE_LINEARIZATION_COMPUTED) != 0;
     }
 
     inline bool isClassOrModuleFinal() const {
-        ENFORCE(isClassOrModule());
+        ENFORCE_NO_TIMER(isClassOrModule());
         return (flags & Symbol::Flags::CLASS_OR_MODULE_FINAL) != 0;
     }
 
     inline bool isClassOrModuleSealed() const {
-        ENFORCE(isClassOrModule());
+        ENFORCE_NO_TIMER(isClassOrModule());
         return (flags & Symbol::Flags::CLASS_OR_MODULE_SEALED) != 0;
+    }
+
+    inline bool isClassOrModulePrivate() const {
+        ENFORCE_NO_TIMER(isClassOrModule());
+        return (flags & Symbol::Flags::CLASS_OR_MODULE_PRIVATE) != 0;
+    }
+
+    inline bool isStaticFieldPrivate() const {
+        ENFORCE_NO_TIMER(isStaticField());
+        return (flags & Symbol::Flags::STATIC_FIELD_PRIVATE) != 0;
     }
 
     inline void setClassOrModule() {
@@ -411,45 +444,65 @@ public:
         return (flags & Symbol::Flags::METHOD_FINAL) != 0;
     }
 
-    inline void setPublic() {
+    inline void setMethodPublic() {
         ENFORCE(isMethod());
         flags &= ~Symbol::Flags::METHOD_PRIVATE;
         flags &= ~Symbol::Flags::METHOD_PROTECTED;
     }
 
-    inline void setProtected() {
+    inline void setMethodProtected() {
         ENFORCE(isMethod());
         flags |= Symbol::Flags::METHOD_PROTECTED;
     }
 
-    inline void setPrivate() {
+    inline void setMethodPrivate() {
         ENFORCE(isMethod());
         flags |= Symbol::Flags::METHOD_PRIVATE;
     }
 
-    inline void setClassAbstract() {
+    void setMethodVisibility(Visibility visibility) {
+        ENFORCE(isMethod());
+        switch (visibility) {
+            case Visibility::Public:
+                this->setMethodPublic();
+                break;
+            case Visibility::Protected:
+                this->setMethodProtected();
+                break;
+            case Visibility::Private:
+                this->setMethodPrivate();
+                break;
+        }
+    }
+
+    inline void setClassOrModuleAbstract() {
         ENFORCE(isClassOrModule());
         flags |= Symbol::Flags::CLASS_OR_MODULE_ABSTRACT;
     }
 
-    inline void setClassInterface() {
+    inline void setClassOrModuleInterface() {
         ENFORCE(isClassOrModule());
         flags |= Symbol::Flags::CLASS_OR_MODULE_INTERFACE;
     }
 
-    inline void setClassLinearizationComputed() {
+    inline void setClassOrModuleLinearizationComputed() {
         ENFORCE(isClassOrModule());
         flags |= Symbol::Flags::CLASS_OR_MODULE_LINEARIZATION_COMPUTED;
     }
 
-    inline void setClassFinal() {
+    inline void setClassOrModuleFinal() {
         ENFORCE(isClassOrModule());
         flags |= Symbol::Flags::CLASS_OR_MODULE_FINAL;
     }
 
-    inline void setClassSealed() {
+    inline void setClassOrModuleSealed() {
         ENFORCE(isClassOrModule());
         flags |= Symbol::Flags::CLASS_OR_MODULE_SEALED;
+    }
+
+    inline void setClassOrModulePrivate() {
+        ENFORCE(isClassOrModule());
+        flags |= Symbol::Flags::CLASS_OR_MODULE_PRIVATE;
     }
 
     inline void setTypeAlias() {
@@ -462,6 +515,11 @@ public:
         // To make things nicer, we relax the ENFORCE here to also allow asking whether "some constant" is a type alias.
         ENFORCE(isClassOrModule() || isStaticField() || isTypeMember());
         return isStaticField() && (flags & Symbol::Flags::STATIC_FIELD_TYPE_ALIAS) != 0;
+    }
+
+    inline void setStaticFieldPrivate() {
+        ENFORCE(isStaticField());
+        flags |= Symbol::Flags::STATIC_FIELD_PRIVATE;
     }
 
     inline void setRewriterSynthesized() {
@@ -489,8 +547,8 @@ public:
     std::string toStringFullName(const GlobalState &gs) const;
     std::string showFullName(const GlobalState &gs) const;
 
-    // Not printed when showing name table
-    bool isHiddenFromPrinting(const GlobalState &gs) const;
+    // Returns true if the symbol or any of its children are not in the symbol table. False otherwise.
+    bool isPrintable(const GlobalState &gs) const;
 
     std::string showRaw(const GlobalState &gs) const {
         bool showFull = false;
@@ -502,9 +560,11 @@ public:
         bool showRaw = false;
         return toStringWithOptions(gs, 0, showFull, showRaw);
     }
-    std::string toJSON(const GlobalState &gs, int tabs = 0, bool showFull = false) const;
+    std::string toJSON(const GlobalState &gs, int tabs = 0) const;
     // Renders the full name of this Symbol in a form suitable for user display.
     std::string show(const GlobalState &gs) const;
+
+    std::string_view showKind(const GlobalState &gs) const;
 
     // Returns the singleton class for this class, lazily instantiating it if it
     // doesn't exist.
@@ -520,7 +580,7 @@ public:
 
     void recordSealedSubclass(MutableContext ctx, SymbolRef subclass);
     const InlinedVector<Loc, 2> &sealedLocs(const GlobalState &gs) const;
-    TypePtr sealedSubclassesToUnion(const Context ctx) const;
+    TypePtr sealedSubclassesToUnion(const GlobalState &ctx) const;
 
     // if dealiasing fails here, then we return Untyped instead
     SymbolRef dealias(const GlobalState &gs, int depthLimit = 42) const {
@@ -539,7 +599,7 @@ public:
     SymbolRef superClassOrRebind; // method arugments store rebind here
 
     inline SymbolRef superClass() const {
-        ENFORCE(isClassOrModule());
+        ENFORCE_NO_TIMER(isClassOrModule());
         return superClassOrRebind;
     }
 
@@ -554,22 +614,23 @@ public:
     }
 
     SymbolRef rebind() const {
-        ENFORCE(isMethod());
+        ENFORCE_NO_TIMER(isMethod());
         return superClassOrRebind;
     }
 
     u4 flags = Flags::NONE;
-    u4 uniqueCounter = 1; // used as a counter inside the namer
-    NameRef name;         // todo: move out? it should not matter but it's important for name resolution
+    NameRef name; // todo: move out? it should not matter but it's important for name resolution
     TypePtr resultType;
 
     bool hasSig() const {
-        ENFORCE(isMethod());
+        ENFORCE_NO_TIMER(isMethod());
         return resultType != nullptr;
     }
 
     UnorderedMap<NameRef, SymbolRef> members_;
-    std::vector<ArgInfo> arguments_;
+
+    using ArgumentsStore = InlinedVector<ArgInfo, core::SymbolRef::EXPECTED_METHOD_ARGS_COUNT>;
+    ArgumentsStore arguments_;
 
     UnorderedMap<NameRef, SymbolRef> &members() {
         return members_;
@@ -578,13 +639,13 @@ public:
         return members_;
     };
 
-    std::vector<ArgInfo> &arguments() {
-        ENFORCE(isMethod());
+    ArgumentsStore &arguments() {
+        ENFORCE_NO_TIMER(isMethod());
         return arguments_;
     }
 
-    const std::vector<ArgInfo> &arguments() const {
-        ENFORCE(isMethod());
+    const ArgumentsStore &arguments() const {
+        ENFORCE_NO_TIMER(isMethod());
         return arguments_;
     }
 
@@ -603,6 +664,9 @@ public:
 private:
     friend class serialize::SerializerImpl;
     friend class GlobalState;
+
+    // Not printed when showing symbol table
+    bool isHiddenFromPrinting(const GlobalState &gs) const;
 
     std::string toStringWithOptions(const GlobalState &gs, int tabs = 0, bool showFull = false,
                                     bool showRaw = false) const;
@@ -631,7 +695,7 @@ private:
     SymbolRef findMemberTransitiveInternal(const GlobalState &gs, NameRef name, u4 mask, u4 flags,
                                            int maxDepth = 100) const;
 
-    inline void unsetClassLinearizationComputed() {
+    inline void unsetClassOrModuleLinearizationComputed() {
         ENFORCE(isClassOrModule());
         flags &= ~Symbol::Flags::CLASS_OR_MODULE_LINEARIZATION_COMPUTED;
     }

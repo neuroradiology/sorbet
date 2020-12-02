@@ -399,7 +399,7 @@ void makeLSPTypes(vector<shared_ptr<JSONClassType>> &enumTypes, vector<shared_pt
 
     auto CodeActionKind = makeStrEnum("CodeActionKind",
                                       {"quickfix", "refactor", "refactor.extract", "refactor.inline",
-                                       "refactor.rewrite", "source", "source.organizeImports"},
+                                       "refactor.rewrite", "source", "source.organizeImports", "source.fixAll.sorbet"},
                                       enumTypes);
 
     auto CodeActionKindSupport =
@@ -1247,6 +1247,13 @@ void makeLSPTypes(vector<shared_ptr<JSONClassType>> &enumTypes, vector<shared_pt
     // Empty object.
     auto InitializedParams = makeObject("InitializedParams", {}, classTypes);
 
+    auto PrepareRenameResult = makeObject("PrepareRenameResult",
+                                          {
+                                              makeField("range", Range),
+                                              makeField("placeholder", makeOptional(JSONString)),
+                                          },
+                                          classTypes);
+
     /* Sorbet LSP extensions */
     auto SorbetOperationStatus = makeStrEnum("SorbetOperationStatus", {"start", "end"}, enumTypes);
     auto SorbetShowOperationParams = makeObject("SorbetShowOperationParams",
@@ -1278,11 +1285,13 @@ void makeLSPTypes(vector<shared_ptr<JSONClassType>> &enumTypes, vector<shared_pt
                    {
                        "u4 epoch = 0;",
                        "// Contains the number of individual edit messages merged into this edit.",
-                       "u2 mergeCount = 0;",
+                       "u4 mergeCount = 0;",
                        "// Used in multithreaded tests to wait for a cancellation to occur when processing this edit.",
                        "bool sorbetCancellationExpected = false;"
                        "// Used in multithreaded tests to wait for a preemption to occur when processing this edit.",
                        "int sorbetPreemptionsExpected = 0;",
+                       "// For each edit rolled up into update, contains a timer used to report diagnostic latency.",
+                       "std::vector<std::unique_ptr<Timer>> diagnosticLatencyTimers;",
                        "// File updates contained in this edit.",
                        "std::vector<std::shared_ptr<core::File>> updates;",
                        "// Merge newerParams into this object, which mutates `epoch` and `updates`",
@@ -1300,11 +1309,14 @@ void makeLSPTypes(vector<shared_ptr<JSONClassType>> &enumTypes, vector<shared_pt
                                              },
                                              classTypes);
 
+    auto SorbetCounters = makeObject("SorbetCounters", {}, classTypes, {"CounterState counters;"});
+
     /* Core LSPMessage objects */
     // N.B.: Only contains LSP methods that Sorbet actually cares about.
     // All others are ignored.
     auto LSPMethod = makeStrEnum("LSPMethod",
                                  {
+                                     "__GETCOUNTERS__",
                                      "__PAUSE__",
                                      "__RESUME__",
                                      "$/cancelRequest",
@@ -1328,9 +1340,12 @@ void makeLSPTypes(vector<shared_ptr<JSONClassType>> &enumTypes, vector<shared_pt
                                      "textDocument/didOpen",
                                      "textDocument/documentHighlight",
                                      "textDocument/documentSymbol",
+                                     "textDocument/formatting",
                                      "textDocument/hover",
+                                     "textDocument/prepareRename",
                                      "textDocument/publishDiagnostics",
                                      "textDocument/references",
+                                     "textDocument/rename",
                                      "textDocument/signatureHelp",
                                      "window/showMessage",
                                      "workspace/symbol",
@@ -1340,6 +1355,7 @@ void makeLSPTypes(vector<shared_ptr<JSONClassType>> &enumTypes, vector<shared_pt
     auto methodField = makeField("method", LSPMethod);
     auto RequestMessageParamsType =
         makeDiscriminatedUnion(methodField, {
+                                                {"__GETCOUNTERS__", makeOptional(JSONNull)},
                                                 {"initialize", InitializeParams},
                                                 {"shutdown", makeOptional(JSONNull)},
                                                 {"textDocument/documentHighlight", TextDocumentPositionParams},
@@ -1348,9 +1364,12 @@ void makeLSPTypes(vector<shared_ptr<JSONClassType>> &enumTypes, vector<shared_pt
                                                 {"textDocument/typeDefinition", TextDocumentPositionParams},
                                                 {"textDocument/hover", TextDocumentPositionParams},
                                                 {"textDocument/completion", CompletionParams},
+                                                {"textDocument/prepareRename", TextDocumentPositionParams},
                                                 {"textDocument/references", ReferenceParams},
+                                                {"textDocument/rename", RenameParams},
                                                 {"textDocument/signatureHelp", TextDocumentPositionParams},
                                                 {"textDocument/codeAction", CodeActionParams},
+                                                {"textDocument/formatting", DocumentFormattingParams},
                                                 {"workspace/symbol", WorkspaceSymbolParams},
                                                 {"sorbet/error", SorbetErrorParams},
                                                 {"sorbet/readFile", TextDocumentIdentifier},
@@ -1365,6 +1384,7 @@ void makeLSPTypes(vector<shared_ptr<JSONClassType>> &enumTypes, vector<shared_pt
     auto ResponseMessageResultType = makeDiscriminatedUnion(
         requestMethodField,
         {
+            {"__GETCOUNTERS__", SorbetCounters},
             {"initialize", InitializeResult},
             {"shutdown", JSONNull},
             // DocumentHighlight[] | null
@@ -1380,8 +1400,11 @@ void makeLSPTypes(vector<shared_ptr<JSONClassType>> &enumTypes, vector<shared_pt
             // CompletionItem[] | CompletionList | null
             // Sorbet only sends CompletionList.
             {"textDocument/completion", CompletionList},
+            {"textDocument/prepareRename", makeVariant({JSONNull, PrepareRenameResult})},
             {"textDocument/references", makeVariant({JSONNull, makeArray(Location)})},
+            {"textDocument/rename", makeVariant({JSONNull, WorkspaceEdit})},
             {"textDocument/signatureHelp", makeVariant({JSONNull, SignatureHelp})},
+            {"textDocument/formatting", makeVariant({JSONNull, makeArray(TextEdit)})},
             // (CodeAction | Command)[] | null
             // Sorbet only sends CodeAction[].
             {"textDocument/codeAction", makeVariant({JSONNull, makeArray(CodeAction)})},

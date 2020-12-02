@@ -2,7 +2,6 @@
 #define TEST_HELPERS_POSITION_ASSERTIONS_H
 
 #include "main/lsp/json_types.h"
-#include "main/lsp/lsp.h"
 #include "main/lsp/wrapper.h"
 #include "test/helpers/expectations.h"
 #include <regex>
@@ -32,6 +31,10 @@ public:
     // is provided.
     static std::unique_ptr<Range> makeRange(int sourceLine, int startChar = 0,
                                             int endChar = RangeAssertion::END_OF_LINE_POS);
+
+    static bool compareByRange(const std::shared_ptr<RangeAssertion> &a, const std::shared_ptr<RangeAssertion> &b) {
+        return a->cmp(*b) < 0;
+    }
 
     /**
      * Filters a vector of assertions and returns only ErrorAssertions.
@@ -98,12 +101,15 @@ public:
 
     const std::string symbol;
     const int version;
+    const bool isDefOfSelf;
+    const bool isDefaultArgValue;
 
     DefAssertion(std::string_view filename, std::unique_ptr<Range> &range, int assertionLine, std::string_view symbol,
-                 int version);
+                 int version, bool isDefOfSelf, bool isDefaultArgValue);
 
-    void check(const UnorderedMap<std::string, std::shared_ptr<core::File>> &sourceFileContents, LSPWrapper &wrapper,
-               int &nextId, const Location &queryLoc);
+    static void check(const UnorderedMap<std::string, std::shared_ptr<core::File>> &sourceFileContents,
+                      LSPWrapper &wrapper, int &nextId, const Location &queryLoc,
+                      const std::vector<std::shared_ptr<DefAssertion>> &definitions);
 
     std::string toString() const override;
 };
@@ -125,11 +131,11 @@ public:
                                 const std::vector<std::shared_ptr<RangeAssertion>> &allLocs);
 
     const std::string symbol;
-    const int version;
+    const std::vector<int> versions;
     std::shared_ptr<DefAssertion> def;
 
     UsageAssertion(std::string_view filename, std::unique_ptr<Range> &range, int assertionLine, std::string_view symbol,
-                   int version);
+                   std::vector<int> versions);
 
     std::string toString() const override;
 };
@@ -296,12 +302,41 @@ public:
     std::string toString() const override;
 };
 
+// ^ apply-rename: [version] newName
+class ApplyRenameAssertion final : public RangeAssertion {
+public:
+    static std::shared_ptr<ApplyRenameAssertion> make(std::string_view filename, std::unique_ptr<Range> &range,
+                                                      int assertionLine, std::string_view assertionContents,
+                                                      std::string_view assertionType);
+
+    /** Checks all ApplyRenameAssertions within the assertion vector. Skips over non-ApplyRenameAssertions. */
+    static void checkAll(const std::vector<std::shared_ptr<RangeAssertion>> &assertions,
+                         const UnorderedMap<std::string, std::shared_ptr<core::File>> &sourceFileContents,
+                         LSPWrapper &wrapper, int &nextId, std::string errorPrefix = "");
+
+    ApplyRenameAssertion(std::string_view filename, std::unique_ptr<Range> &range, int assertionLine,
+                         std::string_view version, std::string newName, bool invalid, std::string expectedErrorMessage);
+
+    // The part between [..] in the assertion which specifies which `.[..].rbedited` file to compare against
+    const std::string version;
+    // New name for constant
+    const std::string newName;
+    const bool invalid;
+    const std::string expectedErrorMessage;
+
+    void check(const UnorderedMap<std::string, std::shared_ptr<core::File>> &sourceFileContents, LSPWrapper &wrapper,
+               int &nextId, std::string errorPrefix = "");
+
+    std::string toString() const override;
+};
+
 // # ^^^ symbol-search: "query" [, optional_key = value ]*
 // Checks that a `workspace/symbol` result for the given "query" returns a result
 // that matches the indicated range in the given file.  Options:
 // * `name = "str"` => the result's `name` must *exactly* match the given string
 //   (useful for synthetic results, like the `foo=` of an `attr_writer`)
-// * `container = "str"` => the `containerName` must *exactly* match the given string
+// * `container = "str"` => the `containerName` must *exactly* match the given string (also supports "(nothing)" to
+//   dictate no entry)
 // * `uri = "substr"` => the `location->uri` must *contain* the given string,
 //   rather than matching the containing file
 //   (container + uri can be useful for matching entries in `rbi` files)

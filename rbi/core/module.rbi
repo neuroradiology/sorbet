@@ -86,7 +86,7 @@ class Module < Object
   # `other_module` is not a module, or if the two values are incomparable.
   sig do
     params(
-        other: Module,
+        other: Object,
     )
     .returns(T.nilable(Integer))
   end
@@ -297,7 +297,7 @@ class Module < Object
   # ```
   sig do
     params(
-        name: Symbol,
+        name: T.any(Symbol, String),
     )
     .returns(T.nilable(String))
   end
@@ -620,6 +620,54 @@ class Module < Object
   end
   def const_set(arg0, arg1); end
 
+  # Returns the Ruby source filename and line number containing first definition of
+  # constant specified. If the named constant is not found, `nil` is returned.
+  # If the constant is found, but its source location can not be extracted (constant is defined in C code), empty array is returned.
+  #
+  # *inherit* specifies whether to lookup in `mod.ancestors` (`true` by default).
+  #
+  # ```ruby
+  # # test.rb
+  # class A
+  #   C1 = 1
+  # end
+  #
+  # module M
+  #   C2 = 2
+  # end
+  #
+  # class B < A
+  #   include M
+  #   C3 = 3
+  # end
+  #
+  # class A # continuation of A definition
+  # end
+  #
+  # p B.const_source_location('C3')           # => ["test.rb", 11]
+  # p B.const_source_location('C2')           # => ["test.rb", 6]
+  # p B.const_source_location('C1')           # => ["test.rb", 2]
+  #
+  # p B.const_source_location('C2', false)    # => nil  -- don't lookup in ancestors
+  #
+  # p Object.const_source_location('B')       # => ["test.rb", 9]
+  # p Object.const_source_location('A')       # => ["test.rb", 1]  -- note it is first entry, not "continuation"
+  #
+  # p B.const_source_location('A')            # => ["test.rb", 1]  -- because Object is in ancestors
+  # p M.const_source_location('A')            # => ["test.rb", 1]  -- Object is not ancestor, but additionally checked for modules
+  #
+  # p Object.const_source_location('A::C1')   # => ["test.rb", 2]  -- nesting is supported
+  # p Object.const_source_location('String')  # => []  -- constant is defined in C code
+  # ```
+  sig do
+    params(
+        sym: T.any(Symbol, String),
+        inherit: T::Boolean,
+    )
+    .returns(T.nilable([String, Integer]))
+  end
+  def const_source_location(sym, inherit=true); end
+
   # Returns an array of the names of the constants accessible in *mod*. This
   # includes the names of constants in any included modules (example at start of
   # section), unless the *inherit* parameter is set to `false`.
@@ -687,6 +735,9 @@ class Module < Object
     .returns(Symbol)
   end
   def define_method(arg0, arg1=T.unsafe(nil), &blk); end
+
+  # Makes a list of existing constants deprecated.
+  def deprecate_constant(*_); end
 
   sig do
     params(
@@ -1215,7 +1266,7 @@ class Module < Object
   # Makes a list of existing constants private.
   sig do
     params(
-        arg0: Symbol,
+        arg0: T.any(Symbol, String),
     )
     .returns(T.self_type)
   end
@@ -1489,6 +1540,25 @@ class Module < Object
   end
   def remove_method(arg0); end
 
+  # For the given method names, marks the method as passing keywords through a
+  # normal argument splat. This should only be called on methods that accept an
+  # argument splat (`*args`) but not explicit keywords or a keyword splat. It
+  # marks the method such that if the method is called with keyword arguments,
+  # the final hash argument is marked with a special flag such that if it is the
+  # final element of a normal argument splat to another method call, and that
+  # method calls does not include explicit keywords or a keyword splat, the
+  # final element is interpreted as keywords. In other words, keywords will be
+  # passed through the method to other methods.
+  #
+  # This should only be used for methods that delegate keywords to another
+  # method, and only for backwards compatibility with Ruby versions before 2.7.
+  #
+  # This method will probably be removed at some point, as it exists only for
+  # backwards compatibility, so always check that the module responds to this
+  # method before calling it.
+  sig { params(method_name: Symbol).returns(T.self_type) }
+  def ruby2_keywords(*method_name); end
+
   # Returns `true` if *mod* is a singleton class or `false` if it is an ordinary
   # class or module.
   #
@@ -1510,13 +1580,53 @@ class Module < Object
   sig {returns(String)}
   def to_s(); end
 
+  # Prevents the current class from responding to calls to the named method.
+  # Contrast this with `remove_method`, which deletes the method from the
+  # particular class; Ruby will still search superclasses and mixed-in modules
+  # for a possible receiver.
+  # [`String`](https://docs.ruby-lang.org/en/2.6.0/String.html) arguments are
+  # converted to symbols.
+  #
+  # ```ruby
+  # class Parent
+  #   def hello
+  #     puts "In parent"
+  #   end
+  # end
+  # class Child < Parent
+  #   def hello
+  #     puts "In child"
+  #   end
+  # end
+  #
+  # c = Child.new
+  # c.hello
+  #
+  # class Child
+  #   remove_method :hello  # remove from child, still in parent
+  # end
+  # c.hello
+  #
+  # class Child
+  #   undef_method :hello   # prevent any calls to 'hello'
+  # end
+  # c.hello
+  # ```
+  #
+  # *produces:*
+  #
+  # ```
+  # In child
+  # In parent
+  # prog.rb:23: undefined method `hello' for #<Child:0x401b3bb4> (NoMethodError)
+  # ```
   sig do
     params(
         arg0: T.any(Symbol, String),
     )
     .returns(T.self_type)
   end
-  def undefMethod(arg0); end
+  def undef_method(arg0); end
 
   # Import class refinements from *module* into the current class or module
   # definition.
@@ -1543,4 +1653,30 @@ class Module < Object
     .returns(NilClass)
   end
   def attr(*arg0); end
+
+  # Returns an array of all modules used in the current scope. The ordering of
+  # modules in the resulting array is not defined.
+  #
+  # ```ruby
+  # module A
+  #   refine Object do
+  #   end
+  # end
+  #
+  # module B
+  #   refine Object do
+  #   end
+  # end
+  #
+  # using A
+  # using B
+  # p Module.used_modules
+  # ```
+  #
+  # *produces:*
+  #
+  # ```ruby
+  # [B, A]
+  # ```
+  def self.used_modules; end
 end

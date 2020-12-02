@@ -14,27 +14,26 @@ void TypeMembers::run(core::MutableContext ctx, ast::ClassDef *cdef) {
     UnorderedSet<core::NameRef> typeMembers;
 
     for (auto &expr : cdef->rhs) {
-        auto assn = ast::cast_tree<ast::Assign>(expr.get());
+        auto assn = ast::cast_tree<ast::Assign>(expr);
         if (!assn) {
             continue;
         }
 
-        auto rhs = ast::cast_tree<ast::Send>(assn->rhs.get());
-        if (!rhs || !rhs->recv->isSelfReference() || rhs->fun != core::Names::typeMember()) {
+        auto rhs = ast::cast_tree<ast::Send>(assn->rhs);
+        if (!rhs || !rhs->recv.isSelfReference() || rhs->fun != core::Names::typeMember()) {
             continue;
         }
 
-        auto lhs = ast::cast_tree<ast::UnresolvedConstantLit>(assn->lhs.get());
+        auto lhs = ast::cast_tree<ast::UnresolvedConstantLit>(assn->lhs);
         if (!lhs) {
             continue;
         }
 
         if (typeMembers.contains(lhs->cnst)) {
-            if (auto e = ctx.state.beginError(lhs->loc, core::errors::Namer::InvalidTypeDefinition)) {
+            if (auto e = ctx.beginError(lhs->loc, core::errors::Namer::InvalidTypeDefinition)) {
                 e.setHeader("Duplicate type member `{}`", lhs->cnst.data(ctx)->show(ctx));
             }
-            auto empty = ast::MK::EmptyTree();
-            expr.swap(empty);
+            expr = ast::MK::EmptyTree();
             return;
         }
 

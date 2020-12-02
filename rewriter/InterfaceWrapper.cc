@@ -11,7 +11,7 @@
 using namespace std;
 
 namespace sorbet::rewriter {
-unique_ptr<ast::Expression> InterfaceWrapper::run(core::MutableContext ctx, ast::Send *send) {
+ast::TreePtr InterfaceWrapper::run(core::MutableContext ctx, ast::Send *send) {
     if (ctx.state.runningUnderAutogen) {
         return nullptr;
     }
@@ -20,15 +20,15 @@ unique_ptr<ast::Expression> InterfaceWrapper::run(core::MutableContext ctx, ast:
         return nullptr;
     }
 
-    if (!ast::isa_tree<ast::UnresolvedConstantLit>(send->recv.get())) {
-        if (auto e = ctx.state.beginError(send->recv->loc, core::errors::Rewriter::BadWrapInstance)) {
+    if (!ast::isa_tree<ast::UnresolvedConstantLit>(send->recv)) {
+        if (auto e = ctx.beginError(send->recv.loc(), core::errors::Rewriter::BadWrapInstance)) {
             e.setHeader("Unsupported wrap_instance() on a non-constant-literal");
         }
         return nullptr;
     }
 
     if (send->args.size() != 1) {
-        if (auto e = ctx.state.beginError(send->loc, core::errors::Rewriter::BadWrapInstance)) {
+        if (auto e = ctx.beginError(send->loc, core::errors::Rewriter::BadWrapInstance)) {
             e.setHeader("Wrong number of arguments to `{}`. Expected: `{}`, got: `{}`", "wrap_instance", 0,
                         send->args.size());
         }

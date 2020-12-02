@@ -4,6 +4,8 @@
 #include "core/AutocorrectSuggestion.h"
 #include "core/Loc.h"
 #include "core/StrictLevel.h"
+#include "spdlog/spdlog.h"
+// spdlog.h must be included before fmt.h https://github.com/sorbet/sorbet/pull/2839
 #include "spdlog/fmt/fmt.h"
 #include <initializer_list>
 #include <memory>
@@ -44,11 +46,27 @@ public:
 struct ErrorLine {
     const Loc loc;
     const std::string formattedMessage;
-    ErrorLine(Loc loc, std::string formattedMessage) : loc(loc), formattedMessage(move(formattedMessage)){};
+    enum class LocDisplay {
+        Shown,
+        Hidden,
+    };
+    LocDisplay displayLoc;
 
+    ErrorLine(Loc loc, std::string formattedMessage, LocDisplay displayLoc = LocDisplay::Shown)
+        : loc(loc), formattedMessage(move(formattedMessage)), displayLoc(displayLoc){};
+
+    // Use this (instead of the constructor) if you want `{}` to mean "turn this cyan if should use
+    // colors, or just backticks otherwise".
     template <typename... Args> static ErrorLine from(Loc loc, std::string_view msg, const Args &... args) {
         std::string formatted = ErrorColors::format(msg, args...);
         return ErrorLine(loc, move(formatted));
+    }
+
+    // You should ALMOST ALWAYS prefer the variant above that takes a Loc.
+    // The best error messages show context associated with locations.
+    template <typename... Args> static ErrorLine fromWithoutLoc(std::string_view msg, const Args &... args) {
+        std::string formatted = ErrorColors::format(msg, args...);
+        return ErrorLine(core::Loc::none(), move(formatted), LocDisplay::Hidden);
     }
     std::string toString(const GlobalState &gs, bool color = true) const;
 };
@@ -86,24 +104,6 @@ public:
     }
 };
 
-/*
- * Used to batch errors in an RAII fashion:
- *
- * {
- *   ErrorRegion errs(gs);
- *   runNamer();
- * }
- */
-class ErrorRegion {
-public:
-    ErrorRegion(const GlobalState &gs, FileRef f) : gs(gs), f(f){};
-    ~ErrorRegion();
-
-private:
-    const GlobalState &gs;
-    FileRef f;
-};
-
 class ErrorBuilder {
     // An ErrorBuilder can be in three states:
     //
@@ -137,7 +137,9 @@ class ErrorBuilder {
 
 public:
     ErrorBuilder(const ErrorBuilder &) = delete;
-    ErrorBuilder(ErrorBuilder &&) = default;
+    // If you undelete this, you will need to make sure the moved ErrorBuilder is marked as 'DidBuild' so Sorbet does
+    // not report an empty error.
+    ErrorBuilder(ErrorBuilder &&) = delete;
     ErrorBuilder(const GlobalState &gs, bool willBuild, Loc loc, ErrorClass what);
     ~ErrorBuilder();
 
@@ -149,6 +151,9 @@ public:
     template <typename... Args> void addErrorLine(Loc loc, ConstExprStr msg, const Args &... args) {
         std::string formatted = ErrorColors::format(msg.str, args...);
         addErrorSection(ErrorSection({ErrorLine(loc, formatted)}));
+    }
+    template <typename... Args> void addErrorNote(ConstExprStr msg, const Args &... args) {
+        addErrorSection(ErrorSection("Note:", {ErrorLine::fromWithoutLoc(msg.str, args...)}));
     }
 
     template <typename... Args> void setHeader(ConstExprStr msg, const Args &... args) {

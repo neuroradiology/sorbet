@@ -116,7 +116,7 @@ module Opus::Types::Test
           mod = Module.new do
             extend T::Sig
             sig {params(a: Integer, b: Integer).returns(Integer)}
-            def self.foo(a: 1, b:)
+            def self.foo(a: 1, b:) # rubocop:disable Style/KeywordParametersOrder
               a + b
             end
           end
@@ -140,13 +140,13 @@ module Opus::Types::Test
         end
         TEST_DATA = {
           x: "foo",
-          y: 50.times.map do |i|
+          y: Array.new(50) do |i|
             "foo_#{i}".to_sym
           end,
-          z: 50.times.map do |i|
+          z: Array.new(50) do |i|
             ["bar_#{i}".to_sym, i.to_s]
           end.to_h,
-        }
+        }.freeze
 
         Critic::Extensions::TypeExt.unpatch_types
         @mod.foo(TEST_DATA[:x], TEST_DATA[:y], TEST_DATA[:z]) # warmup, first run runs in mixed mode, when method is replaced but called in a weird way
@@ -264,7 +264,7 @@ module Opus::Types::Test
           blk.call(4)
         end
 
-        @mod.foo {|i| i * i}
+        @mod.foo {|i| i**2}
       end
 
       it "allows procs to bind" do
@@ -274,17 +274,6 @@ module Opus::Types::Test
         end
 
         assert_equal(7, @mod.foo {self + 4})
-      end
-
-      it "rejects T::Utils::RuntimeProfiled" do
-        @mod.sig {returns(T::Utils::RuntimeProfiled)}
-        def @mod.foo; end
-
-        err = assert_raises(TypeError) do
-          @mod.foo
-        end
-
-        assert_match("Expected type T::Utils::RuntimeProfiled, got type NilClass", err.message)
       end
 
       it "gets the locations right with the second call" do
@@ -304,6 +293,71 @@ module Opus::Types::Test
         # Note that the paths here could be relative or absolute depending on how this test was invoked.
         assert_match(%r{\ACaller: .*test.*/types/method_validation.rb:#{__LINE__ - 5}\z}, lines[1])
         assert_empty(lines[3..-1])
+      end
+
+      class TestEnumerable
+        include Enumerable
+
+        def each
+          yield "something"
+        end
+      end
+
+      it "raises a sensible error for custom enumerable validation errors" do
+        @mod.sig { returns(T::Array[String]) }
+        def @mod.foo
+          TestEnumerable.new
+        end
+
+        err = assert_raises(TypeError) do
+          @mod.foo
+        end
+        assert_match(
+          "Return value: Expected type T::Array[String], got Opus::Types::Test::MethodValidationTest::TestEnumerable",
+          err.message.lines[0])
+      end
+
+      describe 'ranges' do
+        describe 'return type is non-nilable integer' do
+          it 'permits a range that has integers on start and end' do
+            @mod.sig { returns(T::Range[Integer] )}
+            def @mod.foo
+              (1...10)
+            end
+
+            assert_equal((1...10), @mod.foo )
+          end
+
+          it 'permits a range that has an integer start and no end' do
+            @mod.sig { returns(T::Range[Integer] )}
+            def @mod.foo
+              (1...nil)
+            end
+
+            assert_equal((1...nil), @mod.foo )
+          end
+
+          # Ruby 2.6 does not support ranges with boundless starts
+          if RUBY_VERSION >= '2.7'
+            it 'permits a range that has an integer start and no end' do
+              @mod.sig { returns(T::Range[Integer] )}
+              def @mod.foo
+                (nil...10)
+              end
+
+              assert_equal((nil...10), @mod.foo )
+            end
+          end
+
+          it 'permits a range with no beginning or end' do
+            @mod.sig { returns(T::Range[Integer] )}
+            def @mod.foo
+              (nil...nil)
+            end
+
+            assert_equal((nil...nil), @mod.foo )
+          end
+        end
       end
 
       describe "instance methods" do
@@ -442,6 +496,21 @@ module Opus::Types::Test
         end
         assert_match(/\AParameter 'c': Expected type Integer, got type String with value "bye"/, err.message)
       end
+
+      it 'raises an error when two parameters have the same name' do
+
+        @mod.sig { params(_: Integer, _: Integer).returns(String) } # rubocop:disable Lint/DuplicateHashKey
+        def @mod.bar(_, _)
+          ""
+        end
+
+        err = assert_raises(RuntimeError) do
+          @mod.bar(0, 0)
+        end
+
+        lines = err.message.split("\n")
+        assert_equal("The declaration for `bar` has arguments with duplicate names", lines[0])
+      end
     end
 
     # These tests should behave identically with and without a declaration
@@ -476,11 +545,20 @@ module Opus::Types::Test
           assert_match(/wrong number of arguments \(given 0, expected 1..2/, err.message)
         end
 
-        it "fails if a required kwarg is missing" do
-          err = assert_raises(ArgumentError) do
-            @mod.foo({})
+        if RUBY_VERSION >= '2.7'
+          it "fails if a required kwarg is missing" do
+            err = assert_raises(ArgumentError) do
+              @mod.foo({})
+            end
+            assert_equal("missing keyword: :kwreq_int", err.message)
           end
-          assert_equal("missing keyword: kwreq_int", err.message)
+        else
+          it "fails if a required kwarg is missing" do
+            err = assert_raises(ArgumentError) do
+              @mod.foo({})
+            end
+            assert_equal("missing keyword: kwreq_int", err.message)
+          end
         end
       end
     end

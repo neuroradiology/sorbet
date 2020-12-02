@@ -3,7 +3,7 @@ begin
   class <emptyTree><<C <root>>> < (::<todo sym>)
     def self.<static-init><<static-init>$CENSORED>(<blk>)
       begin
-        <emptyTree>
+        ::<Magic>.<define-top-class-or-module>(::C)
         ::Sorbet::Private::Static.keep_for_ide(::C)
         <emptyTree>
       end
@@ -12,7 +12,7 @@ begin
   class ::C<<C C>> < (::<todo sym>)
     def self.<static-init>(<blk>)
       ::C::L = begin
-        ::Sorbet::Private::Static.keep_for_typechecking(::T.proc().params({:"x" => ::Integer}).returns(::Integer))
+        ::Sorbet::Private::Static.keep_for_typechecking(::T.proc().params(:x, ::Integer).returns(::Integer))
         T.let(<self>.lambda() do |x$1|
           x$1.*(x$1)
         end, AppliedType {

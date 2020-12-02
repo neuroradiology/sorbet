@@ -20,7 +20,7 @@ struct builder {
 	ForeignPtr(*assign)(SelfPtr builder, ForeignPtr lhs, const token* eql, ForeignPtr rhs);
 	ForeignPtr(*assignable)(SelfPtr builder, ForeignPtr node);
 	ForeignPtr(*associate)(SelfPtr builder, const token* begin, const node_list* pairs, const token* end);
-	ForeignPtr(*attrAsgn)(SelfPtr builder, ForeignPtr receiver, const token* dot, const token* selector);
+	ForeignPtr(*attrAsgn)(SelfPtr builder, ForeignPtr receiver, const token* dot, const token* selector, bool masgn);
 	ForeignPtr(*backRef)(SelfPtr builder, const token* tok);
 	ForeignPtr(*begin)(SelfPtr builder, const token* begin, ForeignPtr body, const token* end);
 	ForeignPtr(*beginBody)(SelfPtr builder, ForeignPtr body, const node_list* rescueBodies, const token* elseTok, ForeignPtr else_, const token* ensure_tok, ForeignPtr ensure);
@@ -71,6 +71,7 @@ struct builder {
 	ForeignPtr(*keywordZsuper)(SelfPtr builder, const token* keyword);
 	ForeignPtr(*kwarg)(SelfPtr builder, const token* name);
 	ForeignPtr(*kwoptarg)(SelfPtr builder, const token* name, ForeignPtr value);
+	ForeignPtr(*kwnilarg)(SelfPtr builder, const token* dstar, const token* nil);
 	ForeignPtr(*kwrestarg)(SelfPtr builder, const token* dstar, const token* name);
 	ForeignPtr(*kwsplat)(SelfPtr builder, const token* dstar, ForeignPtr arg);
 	ForeignPtr(*line_literal)(SelfPtr builder, const token* tok);
@@ -87,6 +88,8 @@ struct builder {
 	ForeignPtr(*nil)(SelfPtr builder, const token* tok);
 	ForeignPtr(*not_op)(SelfPtr builder, const token* not_, const token* begin, ForeignPtr receiver, const token* end);
 	ForeignPtr(*nth_ref)(SelfPtr builder, const token* tok);
+	ForeignPtr(*numparams)(SelfPtr builder, const node_list* declaringNodes);
+	ForeignPtr(*numblock)(SelfPtr builder, ForeignPtr methodCall, const token* begin, ForeignPtr args, ForeignPtr body, const token* end);
 	ForeignPtr(*op_assign)(SelfPtr builder, ForeignPtr lhs, const token* op, ForeignPtr rhs);
 	ForeignPtr(*optarg)(SelfPtr builder, const token* name, const token* eql, ForeignPtr value);
 	ForeignPtr(*pair)(SelfPtr builder, ForeignPtr key, const token* assoc, ForeignPtr value);

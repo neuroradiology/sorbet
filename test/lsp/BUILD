@@ -8,13 +8,12 @@ sh_binary(
 
 cc_test(
     name = "protocol_test_corpus",
-    timeout = "long",
+    size = "medium",
     srcs = [
         "ProtocolTest.cc",
         "ProtocolTest.h",
         "protocol_test_corpus.cc",
     ],
-    copts = ["-Iexternal/gtest/include"],
     linkstatic = select({
         "//tools/config:linkshared": 0,
         "//conditions:default": 1,
@@ -25,8 +24,31 @@ cc_test(
         "//main/lsp",
         "//payload",
         "//test/helpers",
-        "@com_google_googletest//:gtest",
-        "@com_google_googletest//:gtest_main",
+        "@doctest",
+        "@doctest//:doctest_main",
+    ],
+)
+
+cc_test(
+    name = "cache_protocol_test_corpus",
+    size = "medium",
+    srcs = [
+        "ProtocolTest.cc",
+        "ProtocolTest.h",
+        "cache_protocol_test_corpus.cc",
+    ],
+    linkstatic = select({
+        "//tools/config:linkshared": 0,
+        "//conditions:default": 1,
+    }),
+    visibility = ["//tools:__pkg__"],
+    deps = [
+        "//core",
+        "//main/lsp",
+        "//payload",
+        "//test/helpers",
+        "@doctest",
+        "@doctest//:doctest_main",
     ],
 )
 
@@ -38,7 +60,6 @@ cc_test(
         "ProtocolTest.h",
         "multithreaded_protocol_test_corpus.cc",
     ],
-    copts = ["-Iexternal/gtest/include"],
     linkstatic = select({
         "//tools/config:linkshared": 0,
         "//conditions:default": 1,
@@ -49,8 +70,8 @@ cc_test(
         "//main/lsp",
         "//payload",
         "//test/helpers",
-        "@com_google_googletest//:gtest",
-        "@com_google_googletest//:gtest_main",
+        "@doctest",
+        "@doctest//:doctest_main",
     ],
 )
 
@@ -62,7 +83,6 @@ cc_test(
         "ProtocolTest.h",
         "watchman_test_corpus.cc",
     ],
-    copts = ["-Iexternal/gtest/include"],
     linkstatic = select({
         "//tools/config:linkshared": 0,
         "//conditions:default": 1,
@@ -73,8 +93,8 @@ cc_test(
         "//main/lsp",
         "//payload",
         "//test/helpers",
-        "@com_google_googletest//:gtest",
-        "@com_google_googletest//:gtest_main",
+        "@doctest",
+        "@doctest//:doctest_main",
     ],
 )
 

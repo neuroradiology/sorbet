@@ -11,9 +11,10 @@ using namespace std;
 
 namespace sorbet::infer {
 
+namespace {
 core::TypePtr dropConstructor(core::Context ctx, core::Loc loc, core::TypePtr tp) {
-    if (auto *mt = core::cast_type<core::MetaType>(tp.get())) {
-        if (!mt->wrapped->isUntyped()) {
+    if (auto *mt = core::cast_type<core::MetaType>(tp)) {
+        if (!mt->wrapped.isUntyped()) {
             if (auto e = ctx.state.beginError(loc, core::errors::Infer::BareTypeUsage)) {
                 e.setHeader("Unsupported usage of bare type");
             }
@@ -23,11 +24,66 @@ core::TypePtr dropConstructor(core::Context ctx, core::Loc loc, core::TypePtr tp
     return tp;
 }
 
+bool typeTestReferencesVar(const InlinedVector<std::pair<cfg::LocalRef, core::TypePtr>, 1> &typeTest,
+                           cfg::LocalRef var) {
+    return absl::c_any_of(typeTest, [var](auto &test) { return test.first == var; });
+}
+} // namespace
+
+void TypeTestReverseIndex::addToIndex(cfg::LocalRef from, cfg::LocalRef to) {
+    auto &list = index[from];
+    // Maintain invariant: lists are sorted sets (no duplicate entries)
+    // lower_bound returns the first location that is >= to's ID, which is where `to` should be inserted if *it != to
+    // (uses binary search, O(log n))
+    auto it = absl::c_lower_bound(list, to, [](const auto &a, const auto &b) -> bool { return a.id() < b.id(); });
+    if (it == list.end() || *it != to) {
+        list.insert(it, to);
+    }
+}
+
+const InlinedVector<cfg::LocalRef, 1> &TypeTestReverseIndex::get(cfg::LocalRef from) const {
+    auto it = index.find(from);
+    if (it == index.end()) {
+        return empty;
+    }
+    return it->second;
+}
+
+void TypeTestReverseIndex::replace(cfg::LocalRef from, InlinedVector<cfg::LocalRef, 1> &&list) {
+    index[from] = std::move(list);
+}
+
+void TypeTestReverseIndex::cloneFrom(const TypeTestReverseIndex &index) {
+    this->index = index.index;
+}
+
+const InlinedVector<cfg::LocalRef, 1> TypeTestReverseIndex::empty;
+
+/**
+ * Encode things that we know hold and don't hold.
+ */
+struct KnowledgeFact {
+    bool isDead = false;
+    /* the following type tests are known to be true */
+    InlinedVector<std::pair<cfg::LocalRef, core::TypePtr>, 1> yesTypeTests;
+    /* the following type tests are known to be false */
+    InlinedVector<std::pair<cfg::LocalRef, core::TypePtr>, 1> noTypeTests;
+
+    /* this is a "merge" of two knowledges - computes a "lub" of knowledges */
+    void min(core::Context ctx, const KnowledgeFact &other);
+
+    void sanityCheck() const;
+
+    std::string toString(const core::GlobalState &gs, const cfg::CFG &cfg) const;
+};
+
 KnowledgeFilter::KnowledgeFilter(core::Context ctx, unique_ptr<cfg::CFG> &cfg) {
+    used_vars.resize(cfg->numLocalVariables());
     for (auto &bb : cfg->basicBlocks) {
-        if (bb->bexit.cond.variable != core::LocalVariable::noVariable() &&
-            bb->bexit.cond.variable != core::LocalVariable::blockCall()) {
-            used_vars.insert(bb->bexit.cond.variable);
+        ENFORCE(bb->bexit.cond.variable.exists());
+        if (bb->bexit.cond.variable != cfg::LocalRef::unconditional() &&
+            bb->bexit.cond.variable != cfg::LocalRef::blockCall()) {
+            used_vars[bb->bexit.cond.variable.id()] = true;
         }
     }
     bool changed = true;
@@ -37,24 +93,24 @@ KnowledgeFilter::KnowledgeFilter(core::Context ctx, unique_ptr<cfg::CFG> &cfg) {
             for (auto &bind : bb->exprs) {
                 if (auto *id = cfg::cast_instruction<cfg::Ident>(bind.value.get())) {
                     if (isNeeded(bind.bind.variable) && !isNeeded(id->what)) {
-                        used_vars.insert(id->what);
+                        used_vars[id->what.id()] = true;
                         changed = true;
                     }
                 } else if (auto *send = cfg::cast_instruction<cfg::Send>(bind.value.get())) {
                     if (send->fun == core::Names::bang()) {
                         if (send->args.empty()) {
                             if (isNeeded(bind.bind.variable) && !isNeeded(send->recv.variable)) {
-                                used_vars.insert(send->recv.variable);
+                                used_vars[send->recv.variable.id()] = true;
                                 changed = true;
                             }
                         }
                     } else if (send->fun == core::Names::eqeq()) {
                         if (send->args.size() == 1) {
                             if (isNeeded(send->args[0].variable) && !isNeeded(send->recv.variable)) {
-                                used_vars.insert(send->recv.variable);
+                                used_vars[send->recv.variable.id()] = true;
                                 changed = true;
                             } else if (isNeeded(send->recv.variable) && !isNeeded(send->args[0].variable)) {
-                                used_vars.insert(send->args[0].variable);
+                                used_vars[send->args[0].variable.id()] = true;
                                 changed = true;
                             }
                         }
@@ -65,31 +121,31 @@ KnowledgeFilter::KnowledgeFilter(core::Context ctx, unique_ptr<cfg::CFG> &cfg) {
     }
 }
 
-bool KnowledgeFilter::isNeeded(core::LocalVariable var) {
-    return used_vars.find(var) != used_vars.end();
+bool KnowledgeFilter::isNeeded(cfg::LocalRef var) {
+    return used_vars[var.id()];
 }
 
-KnowledgeRef KnowledgeFact::under(core::Context ctx, const KnowledgeRef &what, const Environment &env, core::Loc loc,
-                                  cfg::CFG &inWhat, cfg::BasicBlock *bb, bool isNeeded) {
-    if (what->yesTypeTests.empty() && !isNeeded) {
-        return what;
+KnowledgeRef KnowledgeRef::under(core::Context ctx, const Environment &env, core::Loc loc, cfg::CFG &inWhat,
+                                 cfg::BasicBlock *bb, bool isNeeded) const {
+    if (knowledge->yesTypeTests.empty() && !isNeeded) {
+        return *this;
     }
-    KnowledgeRef copy = what;
+    KnowledgeRef copy = *this;
     if (env.isDead) {
-        copy.mutate().isDead = true;
+        copy.markDead();
         return copy;
     }
     bool enteringLoop = (bb->flags & cfg::CFG::LOOP_HEADER) != 0;
-    for (auto &pair : env.vars) {
+    for (auto &pair : env.vars()) {
         auto local = pair.first;
         auto &state = pair.second;
-        if (enteringLoop && bb->outerLoops <= inWhat.maxLoopWrite[local]) {
+        if (enteringLoop && bb->outerLoops <= local.maxLoopWrite(inWhat)) {
             continue;
         }
         auto fnd = absl::c_find_if(copy->yesTypeTests, [&](auto const &e) -> bool { return e.first == local; });
         if (fnd == copy->yesTypeTests.end()) {
             // add info from env to knowledge
-            ENFORCE(state.typeAndOrigins.type.get() != nullptr);
+            ENFORCE(state.typeAndOrigins.type != nullptr);
             // This handles code snippets such as
             //
             //    if (...)
@@ -113,15 +169,17 @@ KnowledgeRef KnowledgeFact::under(core::Context ctx, const KnowledgeRef &what, c
             // file effectively exist to support this feature.
 
             auto type = state.typeAndOrigins.type;
-            if (isNeeded && !type->isUntyped() && !core::isa_type<core::MetaType>(type.get())) {
+            if (isNeeded && !type.isUntyped() && !core::isa_type<core::MetaType>(type)) {
+                // Direct mutation of `yesTypeTests` rather than going through `addYesTypeTest`.
+                // This is fine since `copy` is unmoored from a particular environment.
                 copy.mutate().yesTypeTests.emplace_back(local, type);
             }
         } else {
             auto &second = fnd->second;
             auto &typeAndOrigin = state.typeAndOrigins;
             auto combinedType = core::Types::all(ctx, typeAndOrigin.type, second);
-            if (combinedType->isBottom()) {
-                copy.mutate().isDead = true;
+            if (combinedType.isBottom()) {
+                copy.markDead();
                 break;
             }
         }
@@ -132,9 +190,10 @@ KnowledgeRef KnowledgeFact::under(core::Context ctx, const KnowledgeRef &what, c
 void KnowledgeFact::min(core::Context ctx, const KnowledgeFact &other) {
     for (auto it = yesTypeTests.begin(); it != yesTypeTests.end(); /* nothing */) {
         auto &entry = *it;
-        core::LocalVariable local = entry.first;
+        cfg::LocalRef local = entry.first;
         auto fnd = absl::c_find_if(other.yesTypeTests, [&](auto const &elem) -> bool { return elem.first == local; });
         if (fnd == other.yesTypeTests.end()) {
+            // Note: No need to update Environment::typeTestsWithVar since it is an overapproximation
             it = yesTypeTests.erase(it);
         } else {
             entry.second = core::Types::any(ctx, fnd->second, entry.second);
@@ -143,9 +202,10 @@ void KnowledgeFact::min(core::Context ctx, const KnowledgeFact &other) {
     }
     for (auto it = noTypeTests.begin(); it != noTypeTests.end(); /* nothing */) {
         auto &entry = *it;
-        core::LocalVariable local = entry.first;
+        cfg::LocalRef local = entry.first;
         auto fnd = absl::c_find_if(other.noTypeTests, [&](auto const &elem) -> bool { return elem.first == local; });
         if (fnd == other.noTypeTests.end()) {
+            // Note: No need to update Environment::typeTestsWithVar since it is an overapproximation
             it = noTypeTests.erase(it);
         } else {
             entry.second = core::Types::all(ctx, fnd->second, entry.second);
@@ -159,30 +219,33 @@ void KnowledgeFact::sanityCheck() const {
         return;
     }
     for (auto &a : yesTypeTests) {
-        ENFORCE(a.second.get() != nullptr);
-        ENFORCE(!a.second->isUntyped());
+        ENFORCE(a.second != nullptr);
+        ENFORCE(!a.second.isUntyped());
     }
     for (auto &a : noTypeTests) {
-        ENFORCE(a.second.get() != nullptr);
-        ENFORCE(!a.second->isUntyped());
+        ENFORCE(a.second != nullptr);
+        ENFORCE(!a.second.isUntyped());
     }
 }
 
-string KnowledgeFact::toString(const core::GlobalState &gs) const {
+string KnowledgeFact::toString(const core::GlobalState &gs, const cfg::CFG &cfg) const {
     vector<string> buf1, buf2;
 
     for (auto &el : yesTypeTests) {
-        buf1.emplace_back(fmt::format("    {} to be {}\n", el.first.showRaw(gs), el.second->toStringWithTabs(gs, 0)));
+        buf1.emplace_back(
+            fmt::format("    {} to be {}\n", el.first.showRaw(gs, cfg), el.second.toStringWithTabs(gs, 0)));
     }
     for (auto &el : noTypeTests) {
         buf2.emplace_back(
-            fmt::format("    {} NOT to be {}\n", el.first.showRaw(gs), el.second->toStringWithTabs(gs, 0)));
+            fmt::format("    {} NOT to be {}\n", el.first.showRaw(gs, cfg), el.second.toStringWithTabs(gs, 0)));
     }
     fast_sort(buf1);
     fast_sort(buf2);
 
     return fmt::format("{}{}", fmt::join(buf1, ""), fmt::join(buf2, ""));
 }
+
+KnowledgeRef::KnowledgeRef() : knowledge(std::make_shared<KnowledgeFact>()) {}
 
 const KnowledgeFact &KnowledgeRef::operator*() const {
     return *knowledge.get();
@@ -200,69 +263,147 @@ KnowledgeFact &KnowledgeRef::mutate() {
     return *knowledge.get();
 }
 
-string TestedKnowledge::toString(const core::GlobalState &gs) const {
-    fmt::memory_buffer buf;
-    if (!truthy->noTypeTests.empty() || !truthy->yesTypeTests.empty()) {
-        fmt::format_to(buf, "  Being truthy entails:\n{}", truthy->toString(gs));
+void KnowledgeRef::addYesTypeTest(cfg::LocalRef of, TypeTestReverseIndex &index, cfg::LocalRef ref,
+                                  core::TypePtr type) {
+    index.addToIndex(ref, of);
+    this->mutate().yesTypeTests.emplace_back(ref, move(type));
+}
+
+void KnowledgeRef::addNoTypeTest(cfg::LocalRef of, TypeTestReverseIndex &index, cfg::LocalRef ref, core::TypePtr type) {
+    index.addToIndex(ref, of);
+    this->mutate().noTypeTests.emplace_back(ref, move(type));
+}
+
+void KnowledgeRef::markDead() {
+    this->mutate().isDead = true;
+}
+
+void KnowledgeRef::min(core::Context ctx, const KnowledgeFact &other) {
+    this->mutate().min(ctx, other);
+}
+
+void KnowledgeRef::removeReferencesToVar(cfg::LocalRef var) {
+    if (typeTestReferencesVar(knowledge->yesTypeTests, var) || typeTestReferencesVar(knowledge->noTypeTests, var)) {
+        auto &typeTests = this->mutate();
+        // No requirement to update Environment::typeTestsWithVar, which is an overapproximation.
+        typeTests.yesTypeTests.erase(remove_if(typeTests.yesTypeTests.begin(), typeTests.yesTypeTests.end(),
+                                               [&](auto const &c) -> bool { return c.first == var; }),
+                                     typeTests.yesTypeTests.end());
+        typeTests.noTypeTests.erase(remove_if(typeTests.noTypeTests.begin(), typeTests.noTypeTests.end(),
+                                              [&](auto const &c) -> bool { return c.first == var; }),
+                                    typeTests.noTypeTests.end());
     }
-    if (!falsy->noTypeTests.empty() || !falsy->yesTypeTests.empty()) {
-        fmt::format_to(buf, "  Being falsy entails:\n{}", falsy->toString(gs));
+}
+
+string TestedKnowledge::toString(const core::GlobalState &gs, const cfg::CFG &cfg) const {
+    fmt::memory_buffer buf;
+    if (!_truthy->noTypeTests.empty() || !_truthy->yesTypeTests.empty()) {
+        fmt::format_to(buf, "  Being truthy entails:\n{}", _truthy->toString(gs, cfg));
+    }
+    if (!_falsy->noTypeTests.empty() || !_falsy->yesTypeTests.empty()) {
+        fmt::format_to(buf, "  Being falsy entails:\n{}", _falsy->toString(gs, cfg));
     }
     return to_string(buf);
+}
+
+void TestedKnowledge::replaceTruthy(cfg::LocalRef of, TypeTestReverseIndex &index, const KnowledgeRef &newTruthy) {
+    // Note: No need to remove old items from Environment::typeTestsWithVar since it is an overapproximation
+    for (auto &entry : newTruthy->yesTypeTests) {
+        index.addToIndex(entry.first, of);
+    }
+
+    for (auto &entry : newTruthy->noTypeTests) {
+        index.addToIndex(entry.first, of);
+    }
+
+    _truthy = newTruthy;
+}
+
+void TestedKnowledge::replaceFalsy(cfg::LocalRef of, TypeTestReverseIndex &index, const KnowledgeRef &newFalsy) {
+    // Note: No need to remove old items from Environment::typeTestsWithVar since it is an overapproximation
+    for (auto &entry : newFalsy->yesTypeTests) {
+        index.addToIndex(entry.first, of);
+    }
+
+    for (auto &entry : newFalsy->noTypeTests) {
+        index.addToIndex(entry.first, of);
+    }
+
+    _falsy = newFalsy;
+}
+
+void TestedKnowledge::replace(cfg::LocalRef of, TypeTestReverseIndex &index, const TestedKnowledge &knowledge) {
+    this->seenTruthyOption = knowledge.seenTruthyOption;
+    this->seenFalsyOption = knowledge.seenFalsyOption;
+    replaceFalsy(of, index, knowledge.falsy());
+    replaceTruthy(of, index, knowledge.truthy());
+}
+
+void TestedKnowledge::removeReferencesToVar(cfg::LocalRef var) {
+    this->_truthy.removeReferencesToVar(var);
+    this->_falsy.removeReferencesToVar(var);
+}
+
+void TestedKnowledge::emitKnowledgeSizeMetric() const {
+    histogramInc("infer.knowledge.truthy.yes.size", _truthy->yesTypeTests.size());
+    histogramInc("infer.knowledge.truthy.no.size", _truthy->noTypeTests.size());
+    histogramInc("infer.knowledge.falsy.yes.size", _falsy->yesTypeTests.size());
+    histogramInc("infer.knowledge.falsy.no.size", _falsy->noTypeTests.size());
 }
 
 void TestedKnowledge::sanityCheck() const {
     if (!debug_mode) {
         return;
     }
-    truthy->sanityCheck();
-    falsy->sanityCheck();
-    ENFORCE(TestedKnowledge::empty.falsy->yesTypeTests.empty());
-    ENFORCE(TestedKnowledge::empty.falsy->noTypeTests.empty());
-    ENFORCE(TestedKnowledge::empty.truthy->noTypeTests.empty());
-    ENFORCE(TestedKnowledge::empty.truthy->yesTypeTests.empty());
+    _truthy->sanityCheck();
+    _falsy->sanityCheck();
+    ENFORCE(TestedKnowledge::empty._falsy->yesTypeTests.empty());
+    ENFORCE(TestedKnowledge::empty._falsy->noTypeTests.empty());
+    ENFORCE(TestedKnowledge::empty._truthy->noTypeTests.empty());
+    ENFORCE(TestedKnowledge::empty._truthy->yesTypeTests.empty());
 }
 
-string Environment::toString(const core::GlobalState &gs) const {
+string Environment::toString(const core::GlobalState &gs, const cfg::CFG &cfg) const {
     fmt::memory_buffer buf;
     if (isDead) {
         fmt::format_to(buf, "dead={:d}\n", isDead);
     }
-    vector<pair<core::LocalVariable, VariableState>> sorted;
-    for (const auto &pair : vars) {
+    vector<pair<cfg::LocalRef, VariableState>> sorted;
+    for (const auto &pair : _vars) {
         sorted.emplace_back(pair);
     }
-    fast_sort(sorted, [](const auto &lhs, const auto &rhs) -> bool {
-        return lhs.first._name.id() < rhs.first._name.id() ||
-               (lhs.first._name.id() == rhs.first._name.id() && lhs.first.unique < rhs.first.unique);
+    fast_sort(sorted, [&cfg](const auto &lhs, const auto &rhs) -> bool {
+        return lhs.first.data(cfg)._name.id() < rhs.first.data(cfg)._name.id() ||
+               (lhs.first.data(cfg)._name.id() == rhs.first.data(cfg)._name.id() &&
+                lhs.first.data(cfg).unique < rhs.first.data(cfg).unique);
     });
     for (const auto &pair : sorted) {
         auto var = pair.first;
         auto &state = pair.second;
-        if (var._name == core::Names::debugEnvironmentTemp()) {
+        if (var.data(cfg)._name == core::Names::debugEnvironmentTemp()) {
             continue;
         }
-        fmt::format_to(buf, "{}: {}{}\n{}\n", var.showRaw(gs), state.typeAndOrigins.type->toStringWithTabs(gs, 0),
-                       state.knownTruthy ? " (and truthy)\n" : "", state.knowledge.toString(gs));
+        fmt::format_to(buf, "{}: {}{}\n{}\n", var.showRaw(gs, cfg), state.typeAndOrigins.type.toStringWithTabs(gs, 0),
+                       state.knownTruthy ? " (and truthy)\n" : "", state.knowledge.toString(gs, cfg));
     }
     return to_string(buf);
 }
 
-bool Environment::hasType(core::Context ctx, core::LocalVariable symbol) const {
-    auto fnd = vars.find(symbol);
-    if (fnd == vars.end()) {
+bool Environment::hasType(core::Context ctx, cfg::LocalRef symbol) const {
+    auto fnd = _vars.find(symbol);
+    if (fnd == _vars.end()) {
         return false;
     }
     // We don't distinguish between nullptr and "not set"
-    return fnd->second.typeAndOrigins.type.get() != nullptr;
+    return fnd->second.typeAndOrigins.type != nullptr;
 }
 
-const core::TypeAndOrigins &Environment::getTypeAndOrigin(core::Context ctx, core::LocalVariable symbol) const {
-    auto fnd = vars.find(symbol);
-    if (fnd == vars.end()) {
+const core::TypeAndOrigins &Environment::getTypeAndOrigin(core::Context ctx, cfg::LocalRef symbol) const {
+    auto fnd = _vars.find(symbol);
+    if (fnd == _vars.end()) {
         return uninitialized;
     }
-    ENFORCE(fnd->second.typeAndOrigins.type.get() != nullptr);
+    ENFORCE(fnd->second.typeAndOrigins.type != nullptr);
     return fnd->second.typeAndOrigins;
 }
 
@@ -273,87 +414,105 @@ const core::TypeAndOrigins &Environment::getAndFillTypeAndOrigin(core::Context c
     return ret;
 }
 
-bool Environment::getKnownTruthy(core::LocalVariable var) const {
-    auto fnd = vars.find(var);
-    if (fnd == vars.end()) {
+bool Environment::getKnownTruthy(cfg::LocalRef var) const {
+    auto fnd = _vars.find(var);
+    if (fnd == _vars.end()) {
         return false;
     }
     return fnd->second.knownTruthy;
 }
 
-void Environment::propagateKnowledge(core::Context ctx, core::LocalVariable to, core::LocalVariable from,
+void Environment::propagateKnowledge(core::Context ctx, cfg::LocalRef to, cfg::LocalRef from,
                                      KnowledgeFilter &knowledgeFilter) {
     if (knowledgeFilter.isNeeded(to) && knowledgeFilter.isNeeded(from)) {
-        auto &fromState = vars[from];
-        auto &toState = vars[to];
+        auto &fromState = _vars[from];
+        auto &toState = _vars[to];
         toState.knownTruthy = fromState.knownTruthy;
         auto &toKnowledge = toState.knowledge;
         auto &fromKnowledge = fromState.knowledge;
-        if (fromState.typeAndOrigins.type.get() == nullptr) {
+        if (fromState.typeAndOrigins.type == nullptr) {
             fromState.typeAndOrigins.type = core::Types::nilClass();
         }
-        if (toState.typeAndOrigins.type.get() == nullptr) {
+        if (toState.typeAndOrigins.type == nullptr) {
             toState.typeAndOrigins.type = core::Types::nilClass();
         }
 
-        toKnowledge = fromKnowledge;
-        toKnowledge.truthy.mutate().noTypeTests.emplace_back(from, core::Types::falsyTypes());
-        toKnowledge.falsy.mutate().yesTypeTests.emplace_back(from, core::Types::falsyTypes());
-        fromKnowledge.truthy.mutate().noTypeTests.emplace_back(to, core::Types::falsyTypes());
-        fromKnowledge.falsy.mutate().yesTypeTests.emplace_back(to, core::Types::falsyTypes());
+        // Copy properties from fromKnowledge to toKnowledge
+        toKnowledge.replace(to, typeTestsWithVar, fromKnowledge);
+
+        toKnowledge.truthy().addNoTypeTest(to, typeTestsWithVar, from, core::Types::falsyTypes());
+        toKnowledge.falsy().addYesTypeTest(to, typeTestsWithVar, from, core::Types::falsyTypes());
+        fromKnowledge.truthy().addNoTypeTest(from, typeTestsWithVar, to, core::Types::falsyTypes());
+        fromKnowledge.falsy().addYesTypeTest(from, typeTestsWithVar, to, core::Types::falsyTypes());
         fromKnowledge.sanityCheck();
         toKnowledge.sanityCheck();
     }
 }
 
-void Environment::clearKnowledge(core::Context ctx, core::LocalVariable reassigned, KnowledgeFilter &knowledgeFilter) {
-    for (auto &el : vars) {
-        auto &k = el.second.knowledge;
-        if (knowledgeFilter.isNeeded(el.first)) {
-            auto &truthy = k.truthy.mutate();
-            auto &falsy = k.falsy.mutate();
-            truthy.yesTypeTests.erase(remove_if(truthy.yesTypeTests.begin(), truthy.yesTypeTests.end(),
-                                                [&](auto const &c) -> bool { return c.first == reassigned; }),
-                                      truthy.yesTypeTests.end());
-            falsy.yesTypeTests.erase(remove_if(falsy.yesTypeTests.begin(), falsy.yesTypeTests.end(),
-                                               [&](auto const &c) -> bool { return c.first == reassigned; }),
-                                     falsy.yesTypeTests.end());
-            truthy.noTypeTests.erase(remove_if(truthy.noTypeTests.begin(), truthy.noTypeTests.end(),
-                                               [&](auto const &c) -> bool { return c.first == reassigned; }),
-                                     truthy.noTypeTests.end());
-            falsy.noTypeTests.erase(remove_if(falsy.noTypeTests.begin(), falsy.noTypeTests.end(),
-                                              [&](auto const &c) -> bool { return c.first == reassigned; }),
-                                    falsy.noTypeTests.end());
-            k.sanityCheck();
+void Environment::clearKnowledge(core::Context ctx, cfg::LocalRef reassigned, KnowledgeFilter &knowledgeFilter) {
+    auto &typesWithReassigned = typeTestsWithVar.get(reassigned);
+    if (!typesWithReassigned.empty()) {
+        InlinedVector<cfg::LocalRef, 1> replacement;
+        for (auto &var : typesWithReassigned) {
+            if (knowledgeFilter.isNeeded(var)) {
+                auto &k = getKnowledge(var);
+                k.removeReferencesToVar(reassigned);
+                k.sanityCheck();
+            } else {
+                replacement.emplace_back(var);
+            }
         }
+        typeTestsWithVar.replace(reassigned, std::move(replacement));
     }
-    auto fnd = vars.find(reassigned);
-    ENFORCE(fnd != vars.end());
+
+    auto fnd = _vars.find(reassigned);
+    ENFORCE(fnd != _vars.end());
     fnd->second.knownTruthy = false;
 }
 
+namespace {
+
+// A singleton is a class which is inhabited by a single value.
+//
+// If a variable != a value whose type is a singleton, then that variable's type must not be that value's type.
+//
+// This is not the case for most other equality tests. e.g., x != 0 does not imply ¬ x : Integer.
+//
+// This powers (among other things) exhaustiveness checking for T::Enum.
 bool isSingleton(core::Context ctx, core::SymbolRef sym) {
-    return sym == core::Symbols::NilClass() || sym == core::Symbols::FalseClass() ||
-           sym == core::Symbols::TrueClass() ||
-           (sym.data(ctx)->derivesFrom(ctx, core::Symbols::Singleton()) && sym.data(ctx)->isClassOrModuleFinal());
+    // Singletons that are built into the Ruby VM
+    if (sym == core::Symbols::NilClass() || sym == core::Symbols::FalseClass() || sym == core::Symbols::TrueClass()) {
+        return true;
+    }
+
+    // T::Enum values are modeled as singletons of their own fake class.
+    if (sym.data(ctx)->name.data(ctx)->isTEnumName(ctx)) {
+        return true;
+    }
+
+    // The Ruby stdlib has a Singleton module which lets people invent their own singletons.
+    return (sym.data(ctx)->derivesFrom(ctx, core::Symbols::Singleton()) && sym.data(ctx)->isClassOrModuleFinal());
 }
 
-void Environment::updateKnowledge(core::Context ctx, core::LocalVariable local, core::Loc loc, const cfg::Send *send,
+} // namespace
+
+void Environment::updateKnowledge(core::Context ctx, cfg::LocalRef local, core::Loc loc, const cfg::Send *send,
                                   KnowledgeFilter &knowledgeFilter) {
     if (send->fun == core::Names::bang()) {
         if (!knowledgeFilter.isNeeded(local)) {
             return;
         }
         auto &whoKnows = getKnowledge(local);
-        auto fnd = vars.find(send->recv.variable);
-        if (fnd != vars.end()) {
-            whoKnows.truthy = fnd->second.knowledge.falsy;
-            whoKnows.falsy = fnd->second.knowledge.truthy;
-            fnd->second.knowledge.truthy.mutate().yesTypeTests.emplace_back(local, core::Types::falsyTypes());
-            fnd->second.knowledge.falsy.mutate().noTypeTests.emplace_back(local, core::Types::falsyTypes());
+        auto fnd = _vars.find(send->recv.variable);
+        if (fnd != _vars.end()) {
+            whoKnows.replaceTruthy(local, typeTestsWithVar, fnd->second.knowledge.falsy());
+            whoKnows.replaceFalsy(local, typeTestsWithVar, fnd->second.knowledge.truthy());
+            fnd->second.knowledge.truthy().addYesTypeTest(fnd->first, typeTestsWithVar, local,
+                                                          core::Types::falsyTypes());
+            fnd->second.knowledge.falsy().addNoTypeTest(fnd->first, typeTestsWithVar, local, core::Types::falsyTypes());
         }
-        whoKnows.truthy.mutate().yesTypeTests.emplace_back(send->recv.variable, core::Types::falsyTypes());
-        whoKnows.falsy.mutate().noTypeTests.emplace_back(send->recv.variable, core::Types::falsyTypes());
+        whoKnows.truthy().addYesTypeTest(local, typeTestsWithVar, send->recv.variable, core::Types::falsyTypes());
+        whoKnows.falsy().addNoTypeTest(local, typeTestsWithVar, send->recv.variable, core::Types::falsyTypes());
 
         whoKnows.sanityCheck();
     } else if (send->fun == core::Names::nil_p()) {
@@ -361,8 +520,8 @@ void Environment::updateKnowledge(core::Context ctx, core::LocalVariable local, 
             return;
         }
         auto &whoKnows = getKnowledge(local);
-        whoKnows.truthy.mutate().yesTypeTests.emplace_back(send->recv.variable, core::Types::nilClass());
-        whoKnows.falsy.mutate().noTypeTests.emplace_back(send->recv.variable, core::Types::nilClass());
+        whoKnows.truthy().addYesTypeTest(local, typeTestsWithVar, send->recv.variable, core::Types::nilClass());
+        whoKnows.falsy().addNoTypeTest(local, typeTestsWithVar, send->recv.variable, core::Types::nilClass());
         whoKnows.sanityCheck();
     } else if (send->fun == core::Names::blank_p()) {
         if (!knowledgeFilter.isNeeded(local)) {
@@ -375,7 +534,7 @@ void Environment::updateKnowledge(core::Context ctx, core::LocalVariable local, 
 
         if (!core::Types::equiv(ctx, knowledgeTypeWithoutFalsy, originalType)) {
             auto &whoKnows = getKnowledge(local);
-            whoKnows.falsy.mutate().yesTypeTests.emplace_back(send->recv.variable, knowledgeTypeWithoutFalsy);
+            whoKnows.falsy().addYesTypeTest(local, typeTestsWithVar, send->recv.variable, knowledgeTypeWithoutFalsy);
             whoKnows.sanityCheck();
         }
     } else if (send->fun == core::Names::present_p()) {
@@ -389,7 +548,7 @@ void Environment::updateKnowledge(core::Context ctx, core::LocalVariable local, 
 
         if (!core::Types::equiv(ctx, knowledgeTypeWithoutFalsy, originalType)) {
             auto &whoKnows = getKnowledge(local);
-            whoKnows.truthy.mutate().yesTypeTests.emplace_back(send->recv.variable, knowledgeTypeWithoutFalsy);
+            whoKnows.truthy().addYesTypeTest(local, typeTestsWithVar, send->recv.variable, knowledgeTypeWithoutFalsy);
             whoKnows.sanityCheck();
         }
     }
@@ -397,22 +556,24 @@ void Environment::updateKnowledge(core::Context ctx, core::LocalVariable local, 
     if (send->args.empty()) {
         return;
     }
+    // TODO(jez) We should probably update this to be aware of T::NonForcingConstants.non_forcing_is_a?
     if (send->fun == core::Names::kindOf_p() || send->fun == core::Names::isA_p()) {
         if (!knowledgeFilter.isNeeded(local)) {
             return;
         }
         auto &whoKnows = getKnowledge(local);
         auto &klassType = send->args[0].type;
-        core::SymbolRef klass = core::Types::getRepresentedClass(ctx, klassType.get());
+        core::SymbolRef klass = core::Types::getRepresentedClass(ctx, klassType);
         if (klass.exists()) {
-            auto ty = klass.data(ctx)->externalType(ctx);
-            if (!ty->isUntyped()) {
-                whoKnows.truthy.mutate().yesTypeTests.emplace_back(send->recv.variable, ty);
-                whoKnows.falsy.mutate().noTypeTests.emplace_back(send->recv.variable, ty);
+            auto ty = klass.data(ctx)->externalType();
+            if (!ty.isUntyped()) {
+                whoKnows.truthy().addYesTypeTest(local, typeTestsWithVar, send->recv.variable, ty);
+                whoKnows.falsy().addNoTypeTest(local, typeTestsWithVar, send->recv.variable, ty);
             }
             whoKnows.sanityCheck();
         }
-    } else if (send->fun == core::Names::eqeq() || send->fun == core::Names::neq()) {
+    } else if (send->fun == core::Names::eqeq() || send->fun == core::Names::equal_p() ||
+               send->fun == core::Names::neq()) {
         if (!knowledgeFilter.isNeeded(local)) {
             return;
         }
@@ -420,29 +581,32 @@ void Environment::updateKnowledge(core::Context ctx, core::LocalVariable local, 
         const auto &argType = send->args[0].type;
         const auto &recvType = send->recv.type;
 
-        auto &truthy = send->fun == core::Names::eqeq() ? whoKnows.truthy : whoKnows.falsy;
-        auto &falsy = send->fun == core::Names::eqeq() ? whoKnows.falsy : whoKnows.truthy;
+        auto funIsEq = send->fun == core::Names::eqeq() || send->fun == core::Names::equal_p();
+        auto &truthy = funIsEq ? whoKnows.truthy() : whoKnows.falsy();
+        auto &falsy = funIsEq ? whoKnows.falsy() : whoKnows.truthy();
 
-        ENFORCE(argType.get() != nullptr);
-        ENFORCE(recvType.get() != nullptr);
-        if (!argType->isUntyped()) {
-            truthy.mutate().yesTypeTests.emplace_back(send->recv.variable, argType);
+        ENFORCE(argType != nullptr);
+        ENFORCE(recvType != nullptr);
+        if (!argType.isUntyped()) {
+            truthy.addYesTypeTest(local, typeTestsWithVar, send->recv.variable, argType);
         }
-        if (!recvType->isUntyped()) {
-            truthy.mutate().yesTypeTests.emplace_back(send->args[0].variable, recvType);
+        if (!recvType.isUntyped()) {
+            truthy.addYesTypeTest(local, typeTestsWithVar, send->args[0].variable, recvType);
         }
-        if (auto s = core::cast_type<core::ClassType>(argType.get())) {
+        if (core::isa_type<core::ClassType>(argType)) {
+            auto s = core::cast_type_nonnull<core::ClassType>(argType);
             // check if s is a singleton. in this case we can learn that
             // a failed comparison means that type test would also fail
-            if (isSingleton(ctx, s->symbol)) {
-                falsy.mutate().noTypeTests.emplace_back(send->recv.variable, argType);
+            if (isSingleton(ctx, s.symbol)) {
+                falsy.addNoTypeTest(local, typeTestsWithVar, send->recv.variable, argType);
             }
         }
-        if (auto s = core::cast_type<core::ClassType>(recvType.get())) {
+        if (core::isa_type<core::ClassType>(recvType)) {
+            auto s = core::cast_type_nonnull<core::ClassType>(recvType);
             // check if s is a singleton. in this case we can learn that
             // a failed comparison means that type test would also fail
-            if (isSingleton(ctx, s->symbol)) {
-                falsy.mutate().noTypeTests.emplace_back(send->args[0].variable, recvType);
+            if (isSingleton(ctx, s.symbol)) {
+                falsy.addNoTypeTest(local, typeTestsWithVar, send->args[0].variable, recvType);
             }
         }
         whoKnows.sanityCheck();
@@ -454,22 +618,23 @@ void Environment::updateKnowledge(core::Context ctx, core::LocalVariable local, 
         const auto &recvType = send->recv.type;
 
         // `when` against class literal
-        core::SymbolRef representedClass = core::Types::getRepresentedClass(ctx, recvType.get());
+        core::SymbolRef representedClass = core::Types::getRepresentedClass(ctx, recvType);
         if (representedClass.exists()) {
-            auto representedType = representedClass.data(ctx)->externalType(ctx);
-            if (!representedType->isUntyped()) {
-                whoKnows.truthy.mutate().yesTypeTests.emplace_back(send->args[0].variable, representedType);
-                whoKnows.falsy.mutate().noTypeTests.emplace_back(send->args[0].variable, representedType);
+            auto representedType = representedClass.data(ctx)->externalType();
+            if (!representedType.isUntyped()) {
+                whoKnows.truthy().addYesTypeTest(local, typeTestsWithVar, send->args[0].variable, representedType);
+                whoKnows.falsy().addNoTypeTest(local, typeTestsWithVar, send->args[0].variable, representedType);
             }
         }
 
         // `when` against singleton
-        if (auto s = core::cast_type<core::ClassType>(recvType.get())) {
+        if (core::isa_type<core::ClassType>(recvType)) {
+            auto s = core::cast_type_nonnull<core::ClassType>(recvType);
             // check if s is a singleton. in this case we can learn that
             // a failed comparison means that type test would also fail
-            if (isSingleton(ctx, s->symbol)) {
-                whoKnows.truthy.mutate().yesTypeTests.emplace_back(send->args[0].variable, recvType);
-                whoKnows.falsy.mutate().noTypeTests.emplace_back(send->args[0].variable, recvType);
+            if (isSingleton(ctx, s.symbol)) {
+                whoKnows.truthy().addYesTypeTest(local, typeTestsWithVar, send->args[0].variable, recvType);
+                whoKnows.falsy().addNoTypeTest(local, typeTestsWithVar, send->args[0].variable, recvType);
             }
         }
         whoKnows.sanityCheck();
@@ -478,13 +643,14 @@ void Environment::updateKnowledge(core::Context ctx, core::LocalVariable local, 
         const auto &recvKlass = send->recv.type;
         const auto &argType = send->args[0].type;
 
-        if (auto *argClass = core::cast_type<core::ClassType>(argType.get())) {
-            if (!recvKlass->derivesFrom(ctx, core::Symbols::Class()) ||
-                !argClass->symbol.data(ctx)->derivesFrom(ctx, core::Symbols::Class())) {
+        if (core::isa_type<core::ClassType>(argType)) {
+            auto argClass = core::cast_type_nonnull<core::ClassType>(argType);
+            if (!recvKlass.derivesFrom(ctx, core::Symbols::Class()) ||
+                !argClass.symbol.data(ctx)->derivesFrom(ctx, core::Symbols::Class())) {
                 return;
             }
-        } else if (auto *argClass = core::cast_type<core::AppliedType>(argType.get())) {
-            if (!recvKlass->derivesFrom(ctx, core::Symbols::Class()) ||
+        } else if (auto *argClass = core::cast_type<core::AppliedType>(argType)) {
+            if (!recvKlass.derivesFrom(ctx, core::Symbols::Class()) ||
                 !argClass->klass.data(ctx)->derivesFrom(ctx, core::Symbols::Class())) {
                 return;
             }
@@ -493,30 +659,32 @@ void Environment::updateKnowledge(core::Context ctx, core::LocalVariable local, 
         }
 
         auto &whoKnows = getKnowledge(local);
-        whoKnows.truthy.mutate().yesTypeTests.emplace_back(send->recv.variable, argType);
-        whoKnows.falsy.mutate().noTypeTests.emplace_back(send->recv.variable, argType);
+        whoKnows.truthy().addYesTypeTest(local, typeTestsWithVar, send->recv.variable, argType);
+        whoKnows.falsy().addNoTypeTest(local, typeTestsWithVar, send->recv.variable, argType);
         whoKnows.sanityCheck();
     }
 }
 
-void Environment::setTypeAndOrigin(core::LocalVariable symbol, const core::TypeAndOrigins &typeAndOrigins) {
-    ENFORCE(typeAndOrigins.type.get() != nullptr);
-    vars[symbol].typeAndOrigins = typeAndOrigins;
+void Environment::setTypeAndOrigin(cfg::LocalRef symbol, const core::TypeAndOrigins &typeAndOrigins) {
+    ENFORCE(typeAndOrigins.type != nullptr);
+    _vars[symbol].typeAndOrigins = typeAndOrigins;
 }
 
 const Environment &Environment::withCond(core::Context ctx, const Environment &env, Environment &copy, bool isTrue,
-                                         const UnorderedMap<core::LocalVariable, VariableState> &filter) {
-    if (!env.bb->bexit.cond.variable.exists() || env.bb->bexit.cond.variable == core::LocalVariable::blockCall()) {
+                                         const UnorderedMap<cfg::LocalRef, VariableState> &filter) {
+    ENFORCE(env.bb->bexit.cond.variable.exists());
+    if (env.bb->bexit.cond.variable == cfg::LocalRef::unconditional() ||
+        env.bb->bexit.cond.variable == cfg::LocalRef::blockCall()) {
         return env;
     }
     copy.cloneFrom(env);
-    copy.assumeKnowledge(ctx, isTrue, env.bb->bexit.cond.variable, env.bb->bexit.loc, filter);
+    copy.assumeKnowledge(ctx, isTrue, env.bb->bexit.cond.variable, core::Loc(ctx.file, env.bb->bexit.loc), filter);
     return copy;
 }
 
-void Environment::assumeKnowledge(core::Context ctx, bool isTrue, core::LocalVariable cond, core::Loc loc,
-                                  const UnorderedMap<core::LocalVariable, VariableState> &filter) {
-    auto &thisKnowledge = getKnowledge(cond, false);
+void Environment::assumeKnowledge(core::Context ctx, bool isTrue, cfg::LocalRef cond, core::Loc loc,
+                                  const UnorderedMap<cfg::LocalRef, VariableState> &filter) {
+    const auto &thisKnowledge = getKnowledge(cond, false);
     thisKnowledge.sanityCheck();
     if (!isTrue) {
         if (getKnownTruthy(cond)) {
@@ -526,11 +694,11 @@ void Environment::assumeKnowledge(core::Context ctx, bool isTrue, core::LocalVar
 
         core::TypeAndOrigins tp = getTypeAndOrigin(ctx, cond);
         tp.origins.emplace_back(loc);
-        if (tp.type->isUntyped()) {
+        if (tp.type.isUntyped()) {
             tp.type = core::Types::falsyTypes();
         } else {
             tp.type = core::Types::all(ctx, tp.type, core::Types::falsyTypes());
-            if (tp.type->isBottom()) {
+            if (tp.type.isBottom()) {
                 isDead = true;
                 return;
             }
@@ -541,19 +709,19 @@ void Environment::assumeKnowledge(core::Context ctx, bool isTrue, core::LocalVar
         tp.origins.emplace_back(loc);
         tp.type = core::Types::dropSubtypesOf(ctx, core::Types::dropSubtypesOf(ctx, tp.type, core::Symbols::NilClass()),
                                               core::Symbols::FalseClass());
-        if (tp.type->isBottom()) {
+        if (tp.type.isBottom()) {
             isDead = true;
             return;
         }
         setTypeAndOrigin(cond, tp);
-        vars[cond].knownTruthy = true;
+        _vars[cond].knownTruthy = true;
     }
 
     if (isDead) {
         return;
     }
 
-    auto &knowledgeToChoose = isTrue ? thisKnowledge.truthy : thisKnowledge.falsy;
+    auto &knowledgeToChoose = isTrue ? thisKnowledge.truthy() : thisKnowledge.falsy();
     auto &yesTests = knowledgeToChoose->yesTypeTests;
     auto &noTests = knowledgeToChoose->noTypeTests;
 
@@ -568,7 +736,7 @@ void Environment::assumeKnowledge(core::Context ctx, bool isTrue, core::LocalVar
             tp.type = glbbed;
         }
         setTypeAndOrigin(typeTested.first, tp);
-        if (tp.type->isBottom()) {
+        if (tp.type.isBottom()) {
             isDead = true;
             return;
         }
@@ -581,10 +749,10 @@ void Environment::assumeKnowledge(core::Context ctx, bool isTrue, core::LocalVar
         core::TypeAndOrigins tp = getTypeAndOrigin(ctx, typeTested.first);
         tp.origins.emplace_back(loc);
 
-        if (!tp.type->isUntyped()) {
+        if (!tp.type.isUntyped()) {
             tp.type = core::Types::approximateSubtract(ctx, tp.type, typeTested.second);
             setTypeAndOrigin(typeTested.first, tp);
-            if (tp.type->isBottom()) {
+            if (tp.type.isBottom()) {
                 isDead = true;
                 return;
             }
@@ -595,13 +763,13 @@ void Environment::assumeKnowledge(core::Context ctx, bool isTrue, core::LocalVar
 void Environment::mergeWith(core::Context ctx, const Environment &other, core::Loc loc, cfg::CFG &inWhat,
                             cfg::BasicBlock *bb, KnowledgeFilter &knowledgeFilter) {
     this->isDead |= other.isDead;
-    for (auto &pair : vars) {
+    for (auto &pair : _vars) {
         auto var = pair.first;
         const auto &otherTO = other.getTypeAndOrigin(ctx, var);
         auto &thisTO = pair.second.typeAndOrigins;
-        if (thisTO.type.get() != nullptr) {
+        if (thisTO.type != nullptr) {
             thisTO.type = core::Types::any(ctx, thisTO.type, otherTO.type);
-            thisTO.type->sanityCheck(ctx);
+            thisTO.type.sanityCheck(ctx);
             for (auto origin : otherTO.origins) {
                 if (!absl::c_linear_search(thisTO.origins, origin)) {
                     thisTO.origins.emplace_back(origin);
@@ -613,7 +781,7 @@ void Environment::mergeWith(core::Context ctx, const Environment &other, core::L
             pair.second.knownTruthy = other.getKnownTruthy(var);
         }
 
-        if (((bb->flags & cfg::CFG::LOOP_HEADER) != 0) && bb->outerLoops <= inWhat.maxLoopWrite[var]) {
+        if (((bb->flags & cfg::CFG::LOOP_HEADER) != 0) && bb->outerLoops <= var.maxLoopWrite(inWhat)) {
             continue;
         }
         bool canBeFalsy = core::Types::canBeFalsy(ctx, otherTO.type) && !other.getKnownTruthy(var);
@@ -621,28 +789,30 @@ void Environment::mergeWith(core::Context ctx, const Environment &other, core::L
 
         if (canBeTruthy) {
             auto &thisKnowledge = getKnowledge(var);
-            auto otherTruthy = KnowledgeFact::under(ctx, other.getKnowledge(var, false).truthy, other, loc, inWhat, bb,
-                                                    knowledgeFilter.isNeeded(var));
+            auto otherTruthy = other.getKnowledge(var, false)
+                                   .truthy()
+                                   .under(ctx, other, loc, inWhat, bb, knowledgeFilter.isNeeded(var));
             if (!otherTruthy->isDead) {
                 if (!thisKnowledge.seenTruthyOption) {
                     thisKnowledge.seenTruthyOption = true;
-                    thisKnowledge.truthy = otherTruthy;
+                    thisKnowledge.replaceTruthy(var, typeTestsWithVar, otherTruthy);
                 } else {
-                    thisKnowledge.truthy.mutate().min(ctx, *otherTruthy);
+                    thisKnowledge.truthy().min(ctx, *otherTruthy);
                 }
             }
         }
 
         if (canBeFalsy) {
             auto &thisKnowledge = getKnowledge(var);
-            auto otherFalsy = KnowledgeFact::under(ctx, other.getKnowledge(var, false).falsy, other, loc, inWhat, bb,
-                                                   knowledgeFilter.isNeeded(var));
+            auto otherFalsy = other.getKnowledge(var, false)
+                                  .falsy()
+                                  .under(ctx, other, loc, inWhat, bb, knowledgeFilter.isNeeded(var));
             if (!otherFalsy->isDead) {
                 if (!thisKnowledge.seenFalsyOption) {
                     thisKnowledge.seenFalsyOption = true;
-                    thisKnowledge.falsy = otherFalsy;
+                    thisKnowledge.replaceFalsy(var, typeTestsWithVar, otherFalsy);
                 } else {
-                    thisKnowledge.falsy.mutate().min(ctx, *otherFalsy);
+                    thisKnowledge.falsy().min(ctx, *otherFalsy);
                 }
             }
         }
@@ -655,12 +825,12 @@ void Environment::computePins(core::Context ctx, const vector<Environment> &envs
         return;
     }
 
-    for (auto &pair : vars) {
+    for (auto &pair : _vars) {
         auto var = pair.first;
         core::TypeAndOrigins tp;
 
-        auto bindMinLoops = inWhat.minLoops.at(var);
-        if (bb->outerLoops == bindMinLoops || bindMinLoops == inWhat.maxLoopWrite.at(var)) {
+        auto bindMinLoops = var.minLoops(inWhat);
+        if (bb->outerLoops == bindMinLoops || bindMinLoops == var.maxLoopWrite(inWhat)) {
             continue;
         }
 
@@ -675,7 +845,7 @@ void Environment::computePins(core::Context ctx, const vector<Environment> &envs
                             tp.origins.emplace_back(origin);
                         }
                     }
-                    tp.type->sanityCheck(ctx);
+                    tp.type.sanityCheck(ctx);
                 } else {
                     tp = otherPin->second;
                 }
@@ -690,21 +860,21 @@ void Environment::computePins(core::Context ctx, const vector<Environment> &envs
 
 void Environment::populateFrom(core::Context ctx, const Environment &other) {
     this->isDead = other.isDead;
-    for (auto &pair : vars) {
+    for (auto &pair : _vars) {
         auto var = pair.first;
         pair.second.typeAndOrigins = other.getTypeAndOrigin(ctx, var);
-        pair.second.knowledge = other.getKnowledge(var, false);
+        pair.second.knowledge.replace(var, typeTestsWithVar, other.getKnowledge(var, false));
         pair.second.knownTruthy = other.getKnownTruthy(var);
     }
 
     this->pinnedTypes = other.pinnedTypes;
 }
 
-core::TypePtr Environment::getReturnType(core::Context ctx, core::TypePtr procType) {
-    if (!procType->derivesFrom(ctx, core::Symbols::Proc())) {
+core::TypePtr Environment::getReturnType(core::Context ctx, const core::TypePtr &procType) {
+    if (!procType.derivesFrom(ctx, core::Symbols::Proc())) {
         return core::Types::untypedUntracked();
     }
-    auto *applied = core::cast_type<core::AppliedType>(procType.get());
+    auto *applied = core::cast_type<core::AppliedType>(procType);
     if (applied == nullptr || applied->targs.empty()) {
         return core::Types::untypedUntracked();
     }
@@ -712,49 +882,50 @@ core::TypePtr Environment::getReturnType(core::Context ctx, core::TypePtr procTy
     return applied->targs.front();
 }
 
-core::TypePtr flattenArrays(core::Context ctx, core::TypePtr type) {
+core::TypePtr flattenArrays(core::Context ctx, const core::TypePtr &type) {
     core::TypePtr result;
 
     typecase(
-        type.get(),
+        type,
 
-        [&](core::OrType *o) {
-            result = core::Types::any(ctx, flattenArrays(ctx, o->left), flattenArrays(ctx, o->right));
+        [&](const core::OrType &o) {
+            result = core::Types::any(ctx, flattenArrays(ctx, o.left), flattenArrays(ctx, o.right));
         },
 
-        [&](core::AppliedType *a) {
-            if (a->klass != core::Symbols::Array()) {
+        [&](const core::AppliedType &a) {
+            if (a.klass != core::Symbols::Array()) {
                 result = type;
                 return;
             }
-            ENFORCE(a->targs.size() == 1);
-            result = a->targs.front();
+            ENFORCE(a.targs.size() == 1);
+            result = a.targs.front();
         },
 
-        [&](core::TupleType *t) { result = t->elementType(); },
+        [&](const core::TupleType &t) { result = t.elementType(); },
 
-        [&](core::Type *t) { result = std::move(type); });
+        [&](const core::TypePtr &t) { result = std::move(type); });
     return result;
 }
 
-core::TypePtr flatmapHack(core::Context ctx, core::TypePtr receiver, core::TypePtr returnType, core::NameRef fun) {
+core::TypePtr flatmapHack(core::Context ctx, const core::TypePtr &receiver, const core::TypePtr &returnType,
+                          core::NameRef fun) {
     if (fun != core::Names::flatMap()) {
         return returnType;
     }
-    if (!receiver->derivesFrom(ctx, core::Symbols::Enumerable())) {
+    if (!receiver.derivesFrom(ctx, core::Symbols::Enumerable())) {
         return returnType;
     }
 
-    if (!receiver->isUntyped() && receiver->derivesFrom(ctx, core::Symbols::Enumerator_Lazy())) {
+    if (!receiver.isUntyped() && receiver.derivesFrom(ctx, core::Symbols::Enumerator_Lazy())) {
         return returnType;
     }
 
     return core::Types::arrayOf(ctx, flattenArrays(ctx, returnType));
 }
 
-core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind, int loopCount, int bindMinLoops,
-                                          KnowledgeFilter &knowledgeFilter, core::TypeConstraint &constr,
-                                          core::TypePtr &methodReturnType) {
+core::TypePtr Environment::processBinding(core::Context ctx, const cfg::CFG &inWhat, cfg::Binding &bind, int loopCount,
+                                          int bindMinLoops, KnowledgeFilter &knowledgeFilter,
+                                          core::TypeConstraint &constr, core::TypePtr &methodReturnType) {
     try {
         core::TypeAndOrigins tp;
         bool noLoopChecking = cfg::isa_instruction<cfg::Alias>(bind.value.get()) ||
@@ -763,7 +934,7 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
 
         bool checkFullyDefined = true;
         const core::lsp::Query &lspQuery = ctx.state.lspQuery;
-        bool lspQueryMatch = lspQuery.matchesLoc(bind.loc);
+        bool lspQueryMatch = lspQuery.matchesLoc(core::Loc(ctx.file, bind.loc));
 
         typecase(
             bind.value.get(),
@@ -780,18 +951,40 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                     checkFullyDefined = false;
                 }
                 core::CallLocs locs{
+                    ctx.file,
                     bind.loc,
                     send->receiverLoc,
                     send->argLocs,
                 };
-                core::DispatchArgs dispatchArgs{send->fun, locs, args, recvType.type, recvType.type, send->link};
-                auto dispatched = recvType.type->dispatchCall(ctx, dispatchArgs);
+
+                core::DispatchArgs dispatchArgs{send->fun,     locs,          send->numPosArgs, args,    recvType.type,
+                                                recvType.type, recvType.type, send->link,       ownerLoc};
+                auto dispatched = recvType.type.dispatchCall(ctx, dispatchArgs);
 
                 auto it = &dispatched;
                 while (it != nullptr) {
                     for (auto &err : it->main.errors) {
                         ctx.state._error(std::move(err));
                     }
+
+                    // Sometimes we hit a method here where the method symbol is Symbols::noSymbol().
+                    //
+                    // The primary cases for that is:
+                    //  - When the receiver is untyped
+                    //  - When the receiver is a void type
+                    //  - Calling super
+                    //  - Calling initialize on an object that doesn't define initialize
+                    //  - When a method doesn't exist.
+                    //
+                    // In all of these cases, we bail out and skip the non-private checking.
+                    if (it->main.method.exists() && it->main.method.data(ctx)->isMethodPrivate() &&
+                        !send->isPrivateOk) {
+                        if (auto e = ctx.beginError(bind.loc, core::errors::Infer::PrivateMethod)) {
+                            e.setHeader("Non-private call to private method `{}`", it->main.method.show(ctx));
+                            e.addErrorLine(it->main.method.data(ctx)->loc(), "Defined as");
+                        }
+                    }
+
                     lspQueryMatch = lspQueryMatch || lspQuery.matchesSymbol(it->main.method);
                     it = it->secondary.get();
                 }
@@ -808,7 +1001,8 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                 if (lspQueryMatch) {
                     core::lsp::QueryResponse::pushQueryResponse(
                         ctx,
-                        core::lsp::SendResponse(bind.loc, retainedResult, send->fun, send->isPrivateOk, ctx.owner));
+                        core::lsp::SendResponse(core::Loc(ctx.file, bind.loc), retainedResult, send->fun,
+                                                send->isPrivateOk, ctx.owner, core::Loc(ctx.file, send->receiverLoc)));
                 }
                 if (send->link) {
                     // This should eventually become ENFORCEs but currently they are wrong
@@ -822,20 +1016,20 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
 
                     send->link->result = move(retainedResult);
                 }
-                tp.origins.emplace_back(bind.loc);
+                tp.origins.emplace_back(core::Loc(ctx.file, bind.loc));
             },
             [&](cfg::Ident *i) {
                 const core::TypeAndOrigins &typeAndOrigin = getTypeAndOrigin(ctx, i->what);
                 tp.type = typeAndOrigin.type;
                 tp.origins = typeAndOrigin.origins;
 
-                if (lspQueryMatch) {
+                if (lspQueryMatch && !bind.value->isSynthetic) {
                     core::lsp::QueryResponse::pushQueryResponse(
-                        ctx, core::lsp::IdentResponse(bind.loc, i->what, tp, ctx.owner));
+                        ctx,
+                        core::lsp::IdentResponse(core::Loc(ctx.file, bind.loc), i->what.data(inWhat), tp, ctx.owner));
                 }
 
-                ENFORCE((bind.loc.exists() && bind.loc.file().data(ctx).hasParseErrors) || !tp.origins.empty(),
-                        "Inferencer did not assign location");
+                ENFORCE(ctx.file.data(ctx).hasParseErrors || !tp.origins.empty(), "Inferencer did not assign location");
             },
             [&](cfg::Alias *a) {
                 core::SymbolRef symbol = a->what.data(ctx)->dealias(ctx);
@@ -843,15 +1037,15 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                 if (data->isClassOrModule()) {
                     auto singletonClass = data->lookupSingletonClass(ctx);
                     ENFORCE(singletonClass.exists(), "Every class should have a singleton class by now.");
-                    tp.type = singletonClass.data(ctx)->externalType(ctx);
+                    tp.type = singletonClass.data(ctx)->externalType();
                     tp.origins.emplace_back(symbol.data(ctx)->loc());
                 } else if (data->isField() || (data->isStaticField() && !data->isTypeAlias()) || data->isTypeMember()) {
-                    if (data->resultType.get() != nullptr) {
+                    if (data->resultType != nullptr) {
                         if (data->isTypeMember()) {
                             if (data->isFixed()) {
                                 // pick the upper bound here, as
                                 // isFixed() => lowerBound == upperBound.
-                                auto lambdaParam = core::cast_type<core::LambdaParam>(data->resultType.get());
+                                auto lambdaParam = core::cast_type<core::LambdaParam>(data->resultType);
                                 ENFORCE(lambdaParam != nullptr);
                                 tp.type = core::make_type<core::MetaType>(lambdaParam->upperBound);
                             } else {
@@ -871,7 +1065,7 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                         tp.type = core::Types::untyped(ctx, symbol);
                     }
                 } else if (data->isTypeAlias()) {
-                    ENFORCE(data->resultType.get() != nullptr);
+                    ENFORCE(data->resultType != nullptr);
                     tp.origins.emplace_back(data->loc());
                     tp.type = core::make_type<core::MetaType>(data->resultType);
                 } else {
@@ -882,7 +1076,7 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
             },
             [&](cfg::SolveConstraint *i) {
                 if (i->link->result->main.constr && !i->link->result->main.constr->solve(ctx)) {
-                    if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::GenericMethodConstaintUnsolved)) {
+                    if (auto e = ctx.beginError(bind.loc, core::errors::Infer::GenericMethodConstaintUnsolved)) {
                         e.setHeader("Could not find valid instantiation of type parameters");
                     }
                 }
@@ -896,7 +1090,7 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                 }
                 type = flatmapHack(ctx, i->link->result->main.receiver, type, i->link->fun);
                 tp.type = std::move(type);
-                tp.origins.emplace_back(bind.loc);
+                tp.origins.emplace_back(core::Loc(ctx.file, bind.loc));
             },
             [&](cfg::LoadArg *i) {
                 /* read type from info filled by define_method */
@@ -914,14 +1108,22 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
 
                 auto argType = i->argument(ctx).argumentTypeAsSeenByImplementation(ctx, constr);
                 tp.type = std::move(argType);
-                tp.origins.emplace_back(bind.loc);
+                tp.origins.emplace_back(core::Loc(ctx.file, bind.loc));
+            },
+            [&](cfg::ArgPresent *i) {
+                // Return an unanalyzable boolean value that indicates whether or not arg was provided
+                // It's unanalyzable because it varies by each individual call site.
+                ENFORCE(ctx.owner == i->method);
+
+                tp.type = core::Types::Boolean();
+                tp.origins.emplace_back(core::Loc(ctx.file, bind.loc));
             },
             [&](cfg::LoadYieldParams *insn) {
                 ENFORCE(insn->link);
                 ENFORCE(insn->link->result);
                 ENFORCE(insn->link->result->main.blockPreType);
                 auto &procType = insn->link->result->main.blockPreType;
-                auto params = procType->getCallArguments(ctx, core::Names::call());
+                auto params = procType.getCallArguments(ctx, core::Names::call());
 
                 // A multi-arg proc, if provided a single arg which is an array,
                 // will implicitly splat it out.
@@ -930,20 +1132,20 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                 // rule doesn't apply. We don't model the distinction accurately
                 // yet.
                 auto &blkArgs = insn->link->argFlags;
-                auto *tuple = core::cast_type<core::TupleType>(params.get());
+                auto *tuple = core::cast_type<core::TupleType>(params);
                 if (blkArgs.size() > 1 && !blkArgs.front().isRepeated && tuple && tuple->elems.size() == 1 &&
-                    tuple->elems.front()->derivesFrom(ctx, core::Symbols::Array())) {
+                    tuple->elems.front().derivesFrom(ctx, core::Symbols::Array())) {
                     tp.type = std::move(tuple->elems.front());
                 } else if (params == nullptr) {
                     tp.type = core::Types::untypedUntracked();
                 } else {
                     tp.type = params;
                 }
-                tp.origins.emplace_back(bind.loc);
+                tp.origins.emplace_back(core::Loc(ctx.file, bind.loc));
             },
             [&](cfg::Return *i) {
                 tp.type = core::Types::bottom();
-                tp.origins.emplace_back(bind.loc);
+                tp.origins.emplace_back(core::Loc(ctx.file, bind.loc));
 
                 const core::TypeAndOrigins &typeAndOrigin = getAndFillTypeAndOrigin(ctx, i->what);
                 if (core::Types::isSubType(ctx, core::Types::void_(), methodReturnType)) {
@@ -951,26 +1153,18 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                 }
                 if (!core::Types::isSubTypeUnderConstraint(ctx, constr, typeAndOrigin.type, methodReturnType,
                                                            core::UntypedMode::AlwaysCompatible)) {
-                    if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::ReturnTypeMismatch)) {
+                    if (auto e = ctx.beginError(bind.loc, core::errors::Infer::ReturnTypeMismatch)) {
                         auto ownerData = ctx.owner.data(ctx);
-                        if (ownerData->name.data(ctx)->kind == core::NameKind::UNIQUE &&
-                            ownerData->name.data(ctx)->unique.uniqueNameKind == core::UniqueNameKind::DefaultArg) {
-                            e.setHeader("Argument does not have asserted type `{}`", methodReturnType->show(ctx));
-                            e.addErrorSection(
-                                core::ErrorSection("Got " + typeAndOrigin.type->show(ctx) + " originating from:",
-                                                   typeAndOrigin.origins2Explanations(ctx)));
-                        } else {
-                            e.setHeader("Returning value that does not conform to method result type");
-                            e.addErrorSection(core::ErrorSection(
-                                "Expected " + methodReturnType->show(ctx),
-                                {
-                                    core::ErrorLine::from(ownerData->loc(), "Method `{}` has return type `{}`",
-                                                          ownerData->name.show(ctx), methodReturnType->show(ctx)),
-                                }));
-                            e.addErrorSection(
-                                core::ErrorSection("Got " + typeAndOrigin.type->show(ctx) + " originating from:",
-                                                   typeAndOrigin.origins2Explanations(ctx)));
-                        }
+                        e.setHeader("Returning value that does not conform to method result type");
+                        e.addErrorSection(core::ErrorSection(
+                            "Expected " + methodReturnType.show(ctx),
+                            {
+                                core::ErrorLine::from(ownerData->loc(), "Method `{}` has return type `{}`",
+                                                      ownerData->name.show(ctx), methodReturnType.show(ctx)),
+                            }));
+                        e.addErrorSection(
+                            core::ErrorSection("Got " + typeAndOrigin.type.show(ctx) + " originating from:",
+                                               typeAndOrigin.origins2Explanations(ctx, ownerLoc)));
                     }
                 }
             },
@@ -985,10 +1179,9 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                 }
                 bool isSubtype;
                 if (i->link->result->main.constr) {
-                    isSubtype = core::Types::isSubTypeUnderConstraint(ctx, *i->link->result->main.constr,
-
-                                                                      typeAndOrigin.type, expectedType,
-                                                                      core::UntypedMode::AlwaysCompatible);
+                    isSubtype =
+                        core::Types::isSubTypeUnderConstraint(ctx, *i->link->result->main.constr, typeAndOrigin.type,
+                                                              expectedType, core::UntypedMode::AlwaysCompatible);
                 } else {
                     isSubtype = core::Types::isSubType(ctx, typeAndOrigin.type, expectedType);
                 }
@@ -997,51 +1190,53 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                     // information about the `send` and/or the
                     // definition of the block type
 
-                    if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::ReturnTypeMismatch)) {
+                    if (auto e = ctx.beginError(bind.loc, core::errors::Infer::ReturnTypeMismatch)) {
                         e.setHeader("Returning value that does not conform to block result type");
-                        e.addErrorSection(core::ErrorSection("Expected " + expectedType->show(ctx)));
+                        e.addErrorSection(core::ErrorSection("Expected " + expectedType.show(ctx)));
                         e.addErrorSection(
-                            core::ErrorSection("Got " + typeAndOrigin.type->show(ctx) + " originating from:",
-                                               typeAndOrigin.origins2Explanations(ctx)));
+                            core::ErrorSection("Got " + typeAndOrigin.type.show(ctx) + " originating from:",
+                                               typeAndOrigin.origins2Explanations(ctx, ownerLoc)));
                     }
                 }
 
                 tp.type = core::Types::bottom();
-                tp.origins.emplace_back(bind.loc);
+                tp.origins.emplace_back(core::Loc(ctx.file, bind.loc));
             },
             [&](cfg::Literal *i) {
                 tp.type = i->value;
-                tp.origins.emplace_back(bind.loc);
+                tp.origins.emplace_back(core::Loc(ctx.file, bind.loc));
 
                 if (lspQueryMatch) {
-                    core::lsp::QueryResponse::pushQueryResponse(ctx, core::lsp::LiteralResponse(bind.loc, tp));
+                    core::lsp::QueryResponse::pushQueryResponse(
+                        ctx, core::lsp::LiteralResponse(core::Loc(ctx.file, bind.loc), tp));
                 }
             },
             [&](cfg::TAbsurd *i) {
                 const core::TypeAndOrigins &typeAndOrigin = getTypeAndOrigin(ctx, i->what.variable);
 
-                if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::NotExhaustive)) {
-                    if (typeAndOrigin.type->isUntyped()) {
+                if (auto e = ctx.beginError(bind.loc, core::errors::Infer::NotExhaustive)) {
+                    if (typeAndOrigin.type.isUntyped()) {
                         e.setHeader("Control flow could reach `{}` because argument was `{}`", "T.absurd", "T.untyped");
                     } else {
                         e.setHeader("Control flow could reach `{}` because the type `{}` wasn't handled", "T.absurd",
-                                    typeAndOrigin.type->show(ctx));
+                                    typeAndOrigin.type.show(ctx));
                     }
-                    e.addErrorSection(core::ErrorSection("Originating from:", typeAndOrigin.origins2Explanations(ctx)));
+                    e.addErrorSection(
+                        core::ErrorSection("Originating from:", typeAndOrigin.origins2Explanations(ctx, ownerLoc)));
                 }
 
                 tp.type = core::Types::bottom();
-                tp.origins.emplace_back(bind.loc);
+                tp.origins.emplace_back(core::Loc(ctx.file, bind.loc));
             },
-            [&](cfg::Unanalyzable *i) {
+            [&](cfg::GetCurrentException *i) {
                 tp.type = core::Types::untypedUntracked();
-                tp.origins.emplace_back(bind.loc);
+                tp.origins.emplace_back(core::Loc(ctx.file, bind.loc));
             },
             [&](cfg::LoadSelf *l) {
                 ENFORCE(l->link);
                 if (l->link->result->main.blockSpec.rebind.exists()) {
-                    tp.type = l->link->result->main.blockSpec.rebind.data(ctx)->externalType(ctx);
-                    tp.origins.emplace_back(bind.loc);
+                    tp.type = l->link->result->main.blockSpec.rebind.data(ctx)->externalType();
+                    tp.origins.emplace_back(core::Loc(ctx.file, bind.loc));
 
                 } else {
                     tp = getTypeAndOrigin(ctx, l->fallback);
@@ -1053,37 +1248,38 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                                                          klass.data(ctx)->selfTypeArgs(ctx));
 
                 tp.type = castType;
-                tp.origins.emplace_back(bind.loc);
+                tp.origins.emplace_back(core::Loc(ctx.file, bind.loc));
 
                 if (!hasType(ctx, bind.bind.variable)) {
                     noLoopChecking = true;
                 }
 
                 const core::TypeAndOrigins &ty = getAndFillTypeAndOrigin(ctx, c->value);
+                ENFORCE(c->cast != core::Names::uncheckedLet());
                 if (c->cast != core::Names::cast()) {
-                    if (c->cast == core::Names::assertType() && ty.type->isUntyped()) {
-                        if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::CastTypeMismatch)) {
+                    if (c->cast == core::Names::assertType() && ty.type.isUntyped()) {
+                        if (auto e = ctx.beginError(bind.loc, core::errors::Infer::CastTypeMismatch)) {
                             e.setHeader("The typechecker was unable to infer the type of the asserted value");
-                            e.addErrorSection(core::ErrorSection("Got " + ty.type->show(ctx) + " originating from:",
-                                                                 ty.origins2Explanations(ctx)));
-                            e.addErrorSection(core::ErrorSection("You may need to add additional `sig` annotations"));
+                            e.addErrorSection(core::ErrorSection("Got " + ty.type.show(ctx) + " originating from:",
+                                                                 ty.origins2Explanations(ctx, ownerLoc)));
+                            e.addErrorNote("You may need to add additional `{}` annotations", "sig");
                         }
                     } else if (!core::Types::isSubType(ctx, ty.type, castType)) {
-                        if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::CastTypeMismatch)) {
-                            e.setHeader("Argument does not have asserted type `{}`", castType->show(ctx));
-                            e.addErrorSection(core::ErrorSection("Got " + ty.type->show(ctx) + " originating from:",
-                                                                 ty.origins2Explanations(ctx)));
+                        if (auto e = ctx.beginError(bind.loc, core::errors::Infer::CastTypeMismatch)) {
+                            e.setHeader("Argument does not have asserted type `{}`", castType.show(ctx));
+                            e.addErrorSection(core::ErrorSection("Got " + ty.type.show(ctx) + " originating from:",
+                                                                 ty.origins2Explanations(ctx, ownerLoc)));
                         }
                     }
                 } else if (!c->isSynthetic) {
-                    if (castType->isUntyped()) {
-                        if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::InvalidCast)) {
+                    if (castType.isUntyped()) {
+                        if (auto e = ctx.beginError(bind.loc, core::errors::Infer::InvalidCast)) {
                             e.setHeader("Please use `T.unsafe(...)` to cast to T.untyped");
                         }
-                    } else if (!ty.type->isUntyped() && core::Types::isSubType(ctx, ty.type, castType)) {
-                        if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::InvalidCast)) {
+                    } else if (!ty.type.isUntyped() && core::Types::isSubType(ctx, ty.type, castType)) {
+                        if (auto e = ctx.beginError(bind.loc, core::errors::Infer::InvalidCast)) {
                             e.setHeader("Useless cast: inferred type `{}` is already a subtype of `{}`",
-                                        ty.type->show(ctx), castType->show(ctx));
+                                        ty.type.show(ctx), castType.show(ctx));
                         }
                     }
                 }
@@ -1092,18 +1288,17 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                 }
             });
 
-        ENFORCE(tp.type.get() != nullptr, "Inferencer did not assign type: {}", bind.value->toString(ctx));
-        tp.type->sanityCheck(ctx);
+        ENFORCE(tp.type != nullptr, "Inferencer did not assign type: {}", bind.value->toString(ctx, inWhat));
+        tp.type.sanityCheck(ctx);
 
-        if (checkFullyDefined && !tp.type->isFullyDefined()) {
-            if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::IncompleteType)) {
+        if (checkFullyDefined && !tp.type.isFullyDefined()) {
+            if (auto e = ctx.beginError(bind.loc, core::errors::Infer::IncompleteType)) {
                 e.setHeader("Expression does not have a fully-defined type (Did you reference another class's type "
                             "members?)");
             }
             tp.type = core::Types::untypedUntracked();
         }
-        ENFORCE((bind.loc.exists() && bind.loc.file().data(ctx).hasParseErrors) || !tp.origins.empty(),
-                "Inferencer did not assign location");
+        ENFORCE(ctx.file.data(ctx).hasParseErrors || !tp.origins.empty(), "Inferencer did not assign location");
 
         if (!noLoopChecking && loopCount != bindMinLoops) {
             auto pin = pinnedTypes.find(bind.bind.variable);
@@ -1117,45 +1312,44 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                 switch (bindMinLoops) {
                     case cfg::CFG::MIN_LOOP_FIELD:
                         if (!asGoodAs) {
-                            if (auto e = ctx.state.beginError(bind.loc,
-                                                              core::errors::Infer::FieldReassignmentTypeMismatch)) {
+                            if (auto e = ctx.beginError(bind.loc, core::errors::Infer::FieldReassignmentTypeMismatch)) {
                                 e.setHeader(
                                     "Reassigning field with a value of wrong type: `{}` is not a subtype of `{}`",
-                                    tp.type->show(ctx), cur.type->show(ctx));
+                                    tp.type.show(ctx), cur.type.show(ctx));
                             }
                             tp = cur;
                         }
                         break;
                     case cfg::CFG::MIN_LOOP_GLOBAL:
                         if (!asGoodAs) {
-                            if (auto e = ctx.state.beginError(bind.loc,
-                                                              core::errors::Infer::GlobalReassignmentTypeMismatch)) {
+                            if (auto e =
+                                    ctx.beginError(bind.loc, core::errors::Infer::GlobalReassignmentTypeMismatch)) {
                                 e.setHeader(
                                     "Reassigning global with a value of wrong type: `{}` is not a subtype of `{}`",
-                                    tp.type->show(ctx), cur.type->show(ctx));
+                                    tp.type.show(ctx), cur.type.show(ctx));
                             }
                             tp = cur;
                         }
                         break;
                     case cfg::CFG::MIN_LOOP_LET:
                         if (!asGoodAs) {
-                            if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::PinnedVariableMismatch)) {
+                            if (auto e = ctx.beginError(bind.loc, core::errors::Infer::PinnedVariableMismatch)) {
                                 e.setHeader("Incompatible assignment to variable declared via `{}`: `{}` is not a "
                                             "subtype of `{}`",
-                                            "let", tp.type->show(ctx), cur.type->show(ctx));
+                                            "let", tp.type.show(ctx), cur.type.show(ctx));
                             }
                             tp = cur;
                         }
                         break;
                     default: {
-                        if (!asGoodAs || (tp.type->isUntyped() && !cur.type->isUntyped())) {
+                        if (!asGoodAs || (tp.type.isUntyped() && !cur.type.isUntyped())) {
                             if (auto ident = cfg::cast_instruction<cfg::Ident>(bind.value.get())) {
                                 // See cfg/builder/builder_walk.cc for an explanation of why this is here.
-                                if (ident->what._name == core::Names::blockBreakAssign()) {
+                                if (ident->what.data(inWhat)._name == core::Names::blockBreakAssign()) {
                                     break;
                                 }
 
-                                if (ident->what._name == core::Names::selfRestore()) {
+                                if (ident->what.data(inWhat)._name == core::Names::selfRestore()) {
                                     // this is a restoration of `self` variable.
                                     // our current analysis isn't smart enogh to see that it's safe to do this by
                                     // construction either https://github.com/sorbet/sorbet/issues/222 or
@@ -1164,12 +1358,12 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                                     break;
                                 }
                             }
-                            if (auto e = ctx.state.beginError(bind.loc, core::errors::Infer::PinnedVariableMismatch)) {
+                            if (auto e = ctx.beginError(bind.loc, core::errors::Infer::PinnedVariableMismatch)) {
                                 e.setHeader("Changing the type of a variable in a loop is not permitted");
+                                e.addErrorSection(core::ErrorSection(
+                                    core::ErrorColors::format("Existing variable has type: `{}`", cur.type.show(ctx))));
                                 e.addErrorSection(core::ErrorSection(core::ErrorColors::format(
-                                    "Existing variable has type: `{}`", cur.type->show(ctx))));
-                                e.addErrorSection(core::ErrorSection(core::ErrorColors::format(
-                                    "Attempting to change type to: `{}`\n", tp.type->show(ctx))));
+                                    "Attempting to change type to: `{}`\n", tp.type.show(ctx))));
 
                                 if (cur.origins.size() == 1) {
                                     // NOTE(nelhage): We assume that if there is
@@ -1180,11 +1374,11 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
                                     // other source (e.g. a function argument)
                                     auto suggest =
                                         core::Types::any(ctx, dropConstructor(ctx, tp.origins[0], tp.type), cur.type);
-                                    e.replaceWith(fmt::format("Initialize as `{}`", suggest->show(ctx)), cur.origins[0],
-                                                  "T.let({}, {})", cur.origins[0].source(ctx), suggest->show(ctx));
+                                    e.replaceWith(fmt::format("Initialize as `{}`", suggest.show(ctx)), cur.origins[0],
+                                                  "T.let({}, {})", cur.origins[0].source(ctx), suggest.show(ctx));
                                 } else {
-                                    e.addErrorSection(
-                                        core::ErrorSection("Original type from:", cur.origins2Explanations(ctx)));
+                                    e.addErrorSection(core::ErrorSection("Original type from:",
+                                                                         cur.origins2Explanations(ctx, ownerLoc)));
                                 }
                             }
 
@@ -1199,7 +1393,7 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
 
         clearKnowledge(ctx, bind.bind.variable, knowledgeFilter);
         if (auto *send = cfg::cast_instruction<cfg::Send>(bind.value.get())) {
-            updateKnowledge(ctx, bind.bind.variable, bind.loc, send, knowledgeFilter);
+            updateKnowledge(ctx, bind.bind.variable, core::Loc(ctx.file, bind.loc), send, knowledgeFilter);
         } else if (auto *i = cfg::cast_instruction<cfg::Ident>(bind.value.get())) {
             propagateKnowledge(ctx, bind.bind.variable, i->what, knowledgeFilter);
         }
@@ -1207,7 +1401,7 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
         return move(tp.type);
     } catch (SorbetException &) {
         Exception::failInFuzzer();
-        if (auto e = ctx.state.beginError(bind.loc, core::errors::Internal::InternalError)) {
+        if (auto e = ctx.beginError(bind.loc, core::errors::Internal::InternalError)) {
             e.setHeader("Failed to type (backtrace is above)");
         }
         throw;
@@ -1216,14 +1410,15 @@ core::TypePtr Environment::processBinding(core::Context ctx, cfg::Binding &bind,
 
 void Environment::cloneFrom(const Environment &rhs) {
     this->isDead = rhs.isDead;
-    this->vars = rhs.vars;
+    this->_vars = rhs._vars;
     this->bb = rhs.bb;
     this->pinnedTypes = rhs.pinnedTypes;
+    this->typeTestsWithVar.cloneFrom(rhs.typeTestsWithVar);
 }
 
-const TestedKnowledge &Environment::getKnowledge(core::LocalVariable symbol, bool shouldFail) const {
-    auto fnd = vars.find(symbol);
-    if (fnd == vars.end()) {
+const TestedKnowledge &Environment::getKnowledge(cfg::LocalRef symbol, bool shouldFail) const {
+    auto fnd = _vars.find(symbol);
+    if (fnd == _vars.end()) {
         ENFORCE(!shouldFail, "Missing knowledge?");
         return TestedKnowledge::empty;
     }
@@ -1231,6 +1426,25 @@ const TestedKnowledge &Environment::getKnowledge(core::LocalVariable symbol, boo
     return fnd->second.knowledge;
 }
 
+void Environment::initializeBasicBlockArgs(const cfg::BasicBlock &bb) {
+    _vars.reserve(bb.args.size());
+    for (const cfg::VariableUseSite &arg : bb.args) {
+        _vars[arg.variable].typeAndOrigins.type = nullptr;
+    }
+}
+
+void Environment::setUninitializedVarsToNil(const core::Context &ctx, core::Loc origin) {
+    for (auto &uninitialized : _vars) {
+        if (uninitialized.second.typeAndOrigins.type == nullptr) {
+            uninitialized.second.typeAndOrigins.type = core::Types::nilClass();
+            uninitialized.second.typeAndOrigins.origins.emplace_back(origin);
+        } else {
+            uninitialized.second.typeAndOrigins.type.sanityCheck(ctx);
+        }
+    }
+}
+
+namespace {
 core::TypeAndOrigins nilTypesWithOriginWithLoc(core::Loc loc) {
     // I'd love to have this, but keepForIDE intentionally has Loc::none() and
     // sometimes ends up here...
@@ -1240,8 +1454,9 @@ core::TypeAndOrigins nilTypesWithOriginWithLoc(core::Loc loc) {
     ret.origins.emplace_back(loc);
     return ret;
 }
+} // namespace
 
-Environment::Environment(core::Loc ownerLoc) : uninitialized(nilTypesWithOriginWithLoc(ownerLoc)) {}
+Environment::Environment(core::Loc ownerLoc) : uninitialized(nilTypesWithOriginWithLoc(ownerLoc)), ownerLoc(ownerLoc) {}
 
 TestedKnowledge TestedKnowledge::empty;
 } // namespace sorbet::infer

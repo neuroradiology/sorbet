@@ -244,7 +244,7 @@ class Pathname < Object
   # [`Dir.glob`](https://docs.ruby-lang.org/en/2.6.0/Dir.html#method-c-glob).
   sig do
     params(
-        p1: String,
+        p1: T.any(String, Pathname),
         p2: String,
     )
     .returns(T::Array[Pathname])
@@ -375,6 +375,7 @@ class Pathname < Object
     )
     .returns(T.untyped)
   end
+  sig {returns(T::Enumerator[Pathname])}
   def ascend(&blk); end
 
   # Returns the last access time for the file.
@@ -417,10 +418,17 @@ class Pathname < Object
     params(
         arg0: String,
         offset: Integer,
+        external_encoding: String,
+        internal_encoding: String,
+        encoding: String,
+        textmode: BasicObject,
+        binmode: BasicObject,
+        autoclose: BasicObject,
+        mode: String,
     )
     .returns(Integer)
   end
-  def binwrite(arg0, offset=T.unsafe(nil)); end
+  def binwrite(arg0, offset=T.unsafe(nil), external_encoding: T.unsafe(nil), internal_encoding: T.unsafe(nil), encoding: T.unsafe(nil), textmode: T.unsafe(nil), binmode: T.unsafe(nil), autoclose: T.unsafe(nil), mode: T.unsafe(nil)); end
 
   # Returns the birth time for the file. If the platform doesn't have birthtime,
   # raises
@@ -469,7 +477,7 @@ class Pathname < Object
     )
     .returns(T::Array[Pathname])
   end
-  def children(with_directory); end
+  def children(with_directory=T.unsafe(nil)); end
 
   # Changes file permissions.
   #
@@ -489,8 +497,8 @@ class Pathname < Object
   # [`File.chown`](https://docs.ruby-lang.org/en/2.6.0/File.html#method-c-chown).
   sig do
     params(
-        owner: Integer,
-        group: Integer,
+        owner: T.nilable(Integer),
+        group: T.nilable(Integer),
     )
     .returns(Integer)
   end
@@ -567,6 +575,7 @@ class Pathname < Object
     )
     .returns(T.untyped)
   end
+  sig {returns(T::Enumerator[Pathname])}
   def descend(&blk); end
 
   # See
@@ -684,6 +693,15 @@ class Pathname < Object
     .returns(T::Enumerator[String])
   end
   def each_line(sep=T.unsafe(nil), limit=T.unsafe(nil), &blk); end
+
+  # Tests the file is empty.
+  #
+  # See
+  # [`Dir#empty?`](https://docs.ruby-lang.org/en/2.6.0/Dir.html#method-i-empty-3F)
+  # and
+  # [`FileTest.empty?`](https://docs.ruby-lang.org/en/2.6.0/FileTest.html#method-i-empty-3F).
+  sig { returns(T::Boolean) }
+  def empty?; end
 
   # Return the entries (files and subdirectories) in the directory, each as a
   # [`Pathname`](https://docs.ruby-lang.org/en/2.6.0/Pathname.html) object.
@@ -871,8 +889,8 @@ class Pathname < Object
   # [`File.lchown`](https://docs.ruby-lang.org/en/2.6.0/File.html#method-c-lchown).
   sig do
     params(
-        owner: Integer,
-        group: Integer,
+        owner: T.nilable(Integer),
+        group: T.nilable(Integer),
     )
     .returns(Integer)
   end
@@ -1370,4 +1388,25 @@ class Pathname < Object
   # etc.
   sig {returns(String)}
   def to_s(); end
+end
+
+module Kernel
+  # Creates a new
+  # [`Pathname`](https://docs.ruby-lang.org/en/2.6.0/Pathname.html) object from
+  # the given string, `path`, and returns pathname object.
+  #
+  # In order to use this constructor, you must first require the
+  # [`Pathname`](https://docs.ruby-lang.org/en/2.6.0/Pathname.html) standard
+  # library extension.
+  #
+  # ```ruby
+  # require 'pathname'
+  # Pathname("/home/zzak")
+  # #=> #<Pathname:/home/zzak>
+  # ```
+  #
+  # See also
+  # [`Pathname::new`](https://docs.ruby-lang.org/en/2.6.0/Pathname.html#method-c-new)
+  # for more information.
+  def Pathname(_); end
 end

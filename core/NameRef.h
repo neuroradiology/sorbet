@@ -44,7 +44,7 @@ public:
     friend GlobalState;
     friend Name;
 
-    NameRef() : _id(-1){};
+    NameRef() : _id(0){};
 
     // WellKnown is a tag to statically indicate that the caller is deliberately
     // constructing a well-known name, whose ID is stable across all
@@ -93,6 +93,8 @@ public:
     NameRef addAt(GlobalState &gs) const;
 
     NameRef prepend(GlobalState &gs, std::string_view s) const;
+
+    NameRef lookupMangledPackageName(const GlobalState &gs) const;
 
     std::string showRaw(const GlobalState &gs) const;
     std::string toString(const GlobalState &gs) const;

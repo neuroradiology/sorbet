@@ -53,6 +53,30 @@ and should not be reported.
 
 [#1993]: https://github.com/sorbet/sorbet/pull/1993
 
+## 3011
+
+There was a Hash literal with duplicated keys.
+
+```ruby
+{my_key: 1, my_key: 2} # error: `my_key` is duplicated
+```
+
+This error can also be caused when trying to write a `sig` for a method with
+duplicated parameter names:
+
+```ruby
+sig {params(_: String, _: Integer).void} # error: `_` is duplicated
+def foo(_, _); end
+```
+
+To write a `sig` for this method, rename the method's parameters to have unique
+names:
+
+```ruby
+sig {params(_a: String, _b: Integer).void} # ok
+def foo(_a, _b); end
+```
+
 ## 4002
 
 Sorbet requires that every `include` references a constant literal. For example,
@@ -125,6 +149,27 @@ class Main
   Elem = type_member # ok
 end
 ```
+
+## 4012
+
+A `class` was redefined as a `module` or _vice versa_ in two separate locations.
+
+```ruby
+# file_a.rb
+class Foo
+end
+
+# file_b.rb
+module Foo
+end
+```
+
+<a href="https://sorbet.run/#%23%20typed%3A%20true%0A%0A%23%20file_a.rb%0Aclass%20Foo%0Aend%0A%0A%23%20file_b.rb%0Amodule%20Foo%0Aend">→
+View on sorbet.run</a>
+
+You can fix this error by ensuring that both definitions are declared as
+`class`es, ensuring both definitions are declared as `module`s, or renaming
+either definition so they no longer conflict.
 
 ## 4015
 
@@ -821,7 +866,9 @@ result of any method call. This effectively means that Sorbet knew the type
 statically for 100% of calls within a file. This sigil is rarely used—usually
 the only files that are `# typed: strong` are RBI files and files with empty
 class definitions. Most Ruby files that actually do interesting things will have
-errors in `# typed: strong`.
+errors in `# typed: strong`. Support for `typed: strong` files is minimal, as
+Sorbet changes regularly and new features often bring new `T.untyped`
+intermediate values.
 
 ## 7019
 
@@ -939,5 +986,25 @@ did not cover all the cases.
 See [Exhaustiveness Checking](exhaustiveness.md) for more information.
 
 [report an issue]: https://github.com/sorbet/sorbet/issues
+
+## 7034
+
+Sorbet detected that the safe navigation operator (`&.`) was being used on a
+receiver that can never be nil. Replace the offending occurrence of `&.` with a
+normal method call (`.`).
+
+```ruby
+# typed: true
+
+extend T::Sig
+
+sig {params(x: Integer, y: T.nilable(Integer)).void}
+def foo(x, y)
+  puts x&.to_s  # error: x can never be nil
+  puts x.to_s   # no error
+
+  puts y&.to_s  # no error: y may be nil
+end
+```
 
 <script src="/js/error-reference.js"></script>

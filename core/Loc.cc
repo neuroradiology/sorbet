@@ -12,6 +12,44 @@ namespace sorbet::core {
 
 using namespace std;
 
+constexpr auto EXTERNAL_PREFIX = "external/com_stripe_ruby_typer/"sv;
+constexpr auto URL_PREFIX = "https://github.com/sorbet/sorbet/tree/master/"sv;
+
+namespace {
+string censorFilePathForSnapshotTests(string_view orig) {
+    string_view result = orig;
+    if (absl::StartsWith(result, EXTERNAL_PREFIX)) {
+        // When running tests from outside of the sorbet repo, the files have a different path in the sandbox.
+        result.remove_prefix(EXTERNAL_PREFIX.size());
+    }
+
+    if (absl::StartsWith(result, URL_PREFIX)) {
+        // This is so that changing RBIs doesn't mean invalidating every symbol-table exp test.
+        result.remove_prefix(URL_PREFIX.size());
+        if (absl::StartsWith(result, EXTERNAL_PREFIX)) {
+            result.remove_prefix(EXTERNAL_PREFIX.size());
+        }
+    }
+
+    if (absl::StartsWith(orig, URL_PREFIX)) {
+        return fmt::format("{}{}", URL_PREFIX, result);
+    } else {
+        return string(result);
+    }
+}
+
+} // namespace
+
+LocOffsets LocOffsets::join(LocOffsets other) const {
+    if (!this->exists()) {
+        return other;
+    }
+    if (!other.exists()) {
+        return *this;
+    }
+    return LocOffsets{min(this->beginPos(), other.beginPos()), max(this->endPos(), other.endPos())};
+}
+
 Loc Loc::join(Loc other) const {
     if (!this->exists()) {
         return other;
@@ -160,6 +198,13 @@ string Loc::toStringWithTabs(const GlobalState &gs, int tabs) const {
     return buf.str();
 }
 
+string LocOffsets::showRaw(const Context ctx) const {
+    return Loc(ctx.file, *this).showRaw(ctx);
+}
+string LocOffsets::showRaw(const MutableContext ctx) const {
+    return Loc(ctx.file, *this).showRaw(ctx);
+}
+
 string Loc::showRaw(const GlobalState &gs) const {
     string_view path;
     if (file().exists()) {
@@ -167,24 +212,36 @@ string Loc::showRaw(const GlobalState &gs) const {
     } else {
         path = "???"sv;
     }
+
+    string censored;
+    if (gs.censorForSnapshotTests) {
+        censored = censorFilePathForSnapshotTests(path);
+        if (absl::StartsWith(path, URL_PREFIX)) {
+            return fmt::format("Loc {{file={} start=removed end=removed}}", censored);
+        }
+        path = censored;
+    }
+
     if (!exists()) {
         return fmt::format("Loc {{file={} start=??? end=???}}", path);
     }
-    if (absl::StartsWith(path, "https://github.com/sorbet/sorbet/tree/master/") && gs.censorForSnapshotTests) {
-        // This is so that changing RBIs doesn't mean invalidating every symbol-table exp test.
-        return fmt::format("Loc {{file={} start=removed end=removed}}", path);
-    }
+
     auto [start, end] = this->position(gs);
     return fmt::format("Loc {{file={} start={}:{} end={}:{}}}", path, start.line, start.column, end.line, end.column);
 }
 
-string Loc::filePosToString(const GlobalState &gs) const {
+string Loc::filePosToString(const GlobalState &gs, bool showFull) const {
     stringstream buf;
     if (!file().exists()) {
         buf << "???";
     } else {
         auto path = gs.getPrintablePath(file().data(gs).path());
-        buf << path;
+        if (gs.censorForSnapshotTests) {
+            buf << censorFilePathForSnapshotTests(path);
+        } else {
+            buf << path;
+        }
+
         if (exists()) {
             auto pos = position(gs);
             if (path.find("https://") == 0) {
@@ -194,7 +251,16 @@ string Loc::filePosToString(const GlobalState &gs) const {
                 buf << ":";
             }
             buf << pos.first.line;
-            // pos.second.line; is intentionally not printed so that iterm2 can open file name:line_number as links
+            if (showFull) {
+                buf << ":";
+                buf << pos.first.column;
+                buf << "-";
+                buf << pos.second.line;
+                buf << ":";
+                buf << pos.second.column;
+            } else {
+                // pos.second.line; is intentionally not printed so that iterm2 can open file name:line_number as links
+            }
         }
     }
     return buf.str();
@@ -210,8 +276,8 @@ bool Loc::contains(const Loc &other) const {
 }
 
 bool Loc::operator==(const Loc &rhs) const {
-    return storage.endLoc == rhs.storage.endLoc && storage.beginLoc == rhs.storage.beginLoc &&
-           storage.fileRef == rhs.storage.fileRef;
+    return storage.offsets.endLoc == rhs.storage.offsets.endLoc &&
+           storage.offsets.beginLoc == rhs.storage.offsets.beginLoc && storage.fileRef == rhs.storage.fileRef;
 }
 
 bool Loc::operator!=(const Loc &rhs) const {

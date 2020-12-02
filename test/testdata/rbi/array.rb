@@ -1,5 +1,12 @@
 # typed: strict
 
+# initializing with array
+T.assert_type!(T::Array[String].new(['a', 'b', 'c']), T::Array[String])
+#  initializing with size
+T.assert_type!(T::Array[T.nilable(String)].new(3), T::Array[T.nilable(String)])
+#  initializing with size and initial  element
+T.assert_type!(T::Array[String].new(3, 'a'), T::Array[String])
+
 # no arg, no block
 T.assert_type!(T::Array[Float].new.sum, T.any(Float, Integer))
 T.assert_type!([Rational(1, 2)].sum, T.any(Rational, Integer))
@@ -32,6 +39,20 @@ T.assert_type!([1,2].repeated_permutation(1) {}, T::Array[Integer])
 T.assert_type!([1,2].combination(1) {}, T::Array[Integer])
 T.assert_type!([1,2].repeated_combination(1) {}, T::Array[Integer])
 
+# assignments
+arr = [1, 2, 3]
+T.assert_type!(arr[0] = 1, Integer)
+T.assert_type!(arr[1..2] = 3, Integer)
+T.assert_type!(arr[1..2] = [100, 200], T::Array[Integer])
+
 # errors
 
 T::Array[Float].new.sum.nan? # error: Method `nan?` does not exist on `Integer` component of `T.any(Integer, Float)`
+
+# bsearch
+T.reveal_type([1,2].bsearch {|x| x == 1}) # error: Revealed type: `T.nilable(Integer)`
+T.reveal_type([1,2].bsearch {|x| x}) # error: Revealed type: `T.nilable(Integer)`
+T.reveal_type(['a','b','c'].bsearch {|x| x == 'a'}) # error: Revealed type: `T.nilable(String)`
+
+# bsearch_index
+T.reveal_type(['a','b','c'].bsearch_index {|x| x == 'a'}) # error: Revealed type: `T.nilable(Integer)`

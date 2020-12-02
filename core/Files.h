@@ -9,6 +9,7 @@ namespace sorbet::core {
 class GlobalState;
 class File;
 struct GlobalStateHash;
+struct FileHash;
 namespace serialize {
 class SerializerImpl;
 }
@@ -39,7 +40,7 @@ public:
         return _id > rhs._id;
     }
 
-    inline u2 id() const {
+    inline unsigned int id() const {
         return _id;
     }
 
@@ -53,9 +54,9 @@ public:
     File &dataAllowingUnsafe(GlobalState &gs) const;
 
 private:
-    u2 _id;
+    u4 _id;
 };
-CheckSize(FileRef, 2, 2);
+CheckSize(FileRef, 4, 4);
 
 class File final {
 public:
@@ -63,11 +64,12 @@ public:
         NotYetRead,
         PayloadGeneration, // Files marked during --store-state
         Payload,           // Files loaded from the binary payload
+        Package,           // Stripe Ruby package
         Normal,
         TombStone,
     };
 
-    bool cachedParseTree = false;
+    bool cached = false;         // If 'true', file is completely cached in kvstore.
     bool hasParseErrors = false; // some reasonable invariants don't hold for invalid files
     bool pluginGenerated = false;
     // Epoch is _only_ used in LSP mode. Do not depend on it elsewhere.
@@ -86,6 +88,7 @@ public:
     bool isPayload() const;
     bool isRBI() const;
     bool isStdlib() const;
+    bool isPackage() const;
 
     File(std::string &&path_, std::string &&source_, Type sourceType, u4 epoch = 0);
     File(File &&other) = delete;
@@ -99,11 +102,15 @@ public:
     /** Given a 1-based line number, returns a string view of the line. */
     std::string_view getLine(int i);
 
+    void setFileHash(std::unique_ptr<const FileHash> hash);
+    const std::shared_ptr<const FileHash> &getFileHash() const;
+
 private:
     const std::string path_;
     const std::string source_;
     mutable std::shared_ptr<std::vector<int>> lineBreaks_;
     mutable StrictLevel minErrorLevel_ = StrictLevel::Max;
+    std::shared_ptr<const FileHash> hash_;
 
 public:
     const StrictLevel originalSigil;

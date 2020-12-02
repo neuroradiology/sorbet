@@ -82,40 +82,40 @@ def strict_func
 end
 No errors! Great job.
 -------------------------
-suggest-typed-strong.rb:1: You could add `# typed: strong` https://srb.help/7022
+suggest-typed-strong.rb:1: You could add `# typed: strict` https://srb.help/7022
      1 |1
         ^
   Autocorrect: Done
-    suggest-typed-strong.rb:1: Inserted `# typed: strong
+    suggest-typed-strong.rb:1: Inserted `# typed: strict
 `
      1 |1
         ^
 Errors: 1
-# typed: strong
+# typed: strict
 1
 No errors! Great job.
 -------------------------
-empty.rb:1: You could add `# typed: strong` https://srb.help/7022
+empty.rb:1: You could add `# typed: strict` https://srb.help/7022
      1 |
         ^
   Autocorrect: Use `-a` to autocorrect
-    empty.rb:1: Insert `# typed: strong
+    empty.rb:1: Insert `# typed: strict
 `
      1 |
         ^
 Errors: 1
 -------------------------
-suggest-typed-with-too-low.rb:2: You could add `# typed: strong` https://srb.help/7022
+suggest-typed-with-too-low.rb:2: You could add `# typed: strict` https://srb.help/7022
      2 |# typed: false
      3 |
   Autocorrect: Done
-    suggest-typed-with-too-low.rb:2: Replaced with `# typed: strong
+    suggest-typed-with-too-low.rb:2: Replaced with `# typed: strict
 `
      2 |# typed: false
      3 |
 Errors: 1
 1
-# typed: strong
+# typed: strict
 -------------------------
 No errors! Great job.
 -------------------------
@@ -139,6 +139,43 @@ Errors: 1
 #!/usr/bin/env ruby
 # typed: true
 def true_func
+end
+No errors! Great job.
+-------------------------
+No errors! Great job.
+# typed: true
+class Foo
+  def initialize
+    @bar = 1
+  end
+end
+# typed: true
+class Foo
+  def bar
+    @bar
+  end
+end
+No errors! Great job.
+-------------------------
+No errors! Great job.
+# typed: strong
+module I1
+  extend T::Sig
+  sig {void}
+  def i1; end
+end
+
+module I2
+  extend T::Sig
+  sig {void}
+  def i2; end
+end
+
+extend T::Sig
+sig {params(x: T.all(I1, I2)).void}
+def foo(x)
+  x.i1
+  x.i2
 end
 No errors! Great job.
 -------------------------

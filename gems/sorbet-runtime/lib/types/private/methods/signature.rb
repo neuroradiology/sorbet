@@ -28,7 +28,7 @@ class T::Private::Methods::Signature
     )
   end
 
-  def initialize(method:, method_name:, raw_arg_types:, raw_return_type:, bind:, mode:, check_level:, parameters: method.parameters, on_failure:, override_allow_incompatible: false)
+  def initialize(method:, method_name:, raw_arg_types:, raw_return_type:, bind:, mode:, check_level:, on_failure:, parameters: method.parameters, override_allow_incompatible: false)
     @method = method
     @method_name = method_name
     @arg_types = []
@@ -66,6 +66,10 @@ class T::Private::Methods::Signature
     end
     if !extra_names.empty?
       raise "The declaration for `#{method.name}` has extra parameter(s): #{extra_names.join(', ')}"
+    end
+
+    if parameters.size != raw_arg_types.size
+      raise "The declaration for `#{method.name}` has arguments with duplicate names"
     end
 
     parameters.zip(raw_arg_types) do |(param_kind, param_name), (type_name, raw_type)|
@@ -121,6 +125,15 @@ class T::Private::Methods::Signature
     end
   end
 
+  attr_writer :method_name
+  protected :method_name=
+
+  def as_alias(alias_name)
+    new_sig = clone
+    new_sig.method_name = alias_name
+    new_sig
+  end
+
   def arg_count
     @arg_types.length
   end
@@ -146,9 +159,10 @@ class T::Private::Methods::Signature
     # can't) match the definition of the method we're validating. In addition, Ruby has a bug that
     # causes forwarding **kwargs to do the wrong thing: see https://bugs.ruby-lang.org/issues/10708
     # and https://bugs.ruby-lang.org/issues/11860.
-    if (args.length > @req_arg_count) && (!@kwarg_types.empty? || @has_keyrest) && args[-1].is_a?(Hash)
+    args_length = args.length
+    if (args_length > @req_arg_count) && (!@kwarg_types.empty? || @has_keyrest) && args[-1].is_a?(Hash)
       kwargs = args[-1]
-      args = args[0...-1]
+      args_length -= 1
     else
       kwargs = EMPTY_HASH
     end
@@ -156,19 +170,19 @@ class T::Private::Methods::Signature
     arg_types = @arg_types
 
     if @has_rest
-      arg_types += [[@rest_name, @rest_type]] * (args.length - @arg_types.length)
+      arg_types += [[@rest_name, @rest_type]] * (args_length - @arg_types.length)
 
-    elsif (args.length < @req_arg_count) || (args.length > @arg_types.length)
+    elsif (args_length < @req_arg_count) || (args_length > @arg_types.length)
       expected_str = @req_arg_count.to_s
       if @arg_types.length != @req_arg_count
         expected_str += "..#{@arg_types.length}"
       end
-      raise ArgumentError.new("wrong number of arguments (given #{args.length}, expected #{expected_str})")
+      raise ArgumentError.new("wrong number of arguments (given #{args_length}, expected #{expected_str})")
     end
 
     begin
       it = 0
-      while it < args.length
+      while it < args_length
         yield arg_types[it][0], args[it], arg_types[it][1]
         it += 1
       end
@@ -184,10 +198,10 @@ class T::Private::Methods::Signature
   end
 
   def method_desc
-    if @method.source_location
-      loc = @method.source_location.join(':')
+    loc = if @method.source_location
+      @method.source_location.join(':')
     else
-      loc = "<unknown location>"
+      "<unknown location>"
     end
     "#{@method} at #{loc}"
   end

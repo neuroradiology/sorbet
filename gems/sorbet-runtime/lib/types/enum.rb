@@ -57,6 +57,17 @@ class T::Enum
     @values
   end
 
+  # This exists for compatibility with the interface of `Hash` & mostly to support
+  # the HashEachMethods Rubocop.
+  sig {params(blk: T.nilable(T.proc.params(arg0: T.attached_class).void)).returns(T.any(T::Enumerator[T.attached_class], T::Array[T.attached_class]))}
+  def self.each_value(&blk)
+    if blk
+      values.each(&blk)
+    else
+      values.each
+    end
+  end
+
   # Convert from serialized value to enum instance
   #
   # Note: It would have been nice to make this method final before people started overriding it.
@@ -88,7 +99,7 @@ class T::Enum
 
   # Note: It would have been nice to make this method final before people started overriding it.
   # @return [Boolean] Does the given serialized value correspond with any of this enum's values.
-  sig {overridable.params(serialized_val: SerializedVal).returns(T::Boolean)}
+  sig {overridable.params(serialized_val: SerializedVal).returns(T::Boolean).checked(:never)}
   def self.has_serialized?(serialized_val)
     if @mapping.nil?
       raise "Attempting to access serialization map of #{self.class} before it has been initialized." \
@@ -97,17 +108,8 @@ class T::Enum
     @mapping.include?(serialized_val)
   end
 
-
-  ## T::Props::CustomType
-
   # Note: Failed CriticalMethodsNoRuntimeTypingTest
-  sig {params(value: T.untyped).returns(T::Boolean).checked(:never)}
-  def self.instance?(value)
-    value.is_a?(self)
-  end
-
-  # Note: Failed CriticalMethodsNoRuntimeTypingTest
-  sig {params(instance: T.nilable(T::Enum)).returns(SerializedVal).checked(:never)}
+  sig {override.params(instance: T.nilable(T::Enum)).returns(SerializedVal).checked(:never)}
   def self.serialize(instance)
     # This is needed otherwise if a Chalk::ODM::Document with a property of the shape
     # T::Hash[T.nilable(MyEnum), Integer] and a value that looks like {nil => 0} is
@@ -124,7 +126,7 @@ class T::Enum
   end
 
   # Note: Failed CriticalMethodsNoRuntimeTypingTest
-  sig {params(mongo_value: SerializedVal).returns(T.attached_class).checked(:never)}
+  sig {override.params(mongo_value: SerializedVal).returns(T.attached_class).checked(:never)}
   def self.deserialize(mongo_value)
     if self == T::Enum
       raise "Cannot call T::Enum.deserialize directly. You must call on a specific child class."
@@ -249,7 +251,7 @@ class T::Enum
 
 
   sig {params(serialized_val: SerializedVal).void}
-  private def initialize(serialized_val=nil)
+  def initialize(serialized_val=nil)
     raise 'T::Enum is abstract' if self.class == T::Enum
     if !self.class.started_initializing?
       raise "Must instantiate all enum values of #{self.class} inside 'enums do'."

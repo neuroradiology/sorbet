@@ -9,6 +9,11 @@ load("@com_grail_bazel_toolchain//toolchain:rules.bzl", "llvm_toolchain")
 llvm_toolchain(
     name = "llvm_toolchain",
     absolute_paths = True,
+    llvm_mirror_prefixes = [
+        "https://sorbet-deps.s3-us-west-2.amazonaws.com/",
+        "https://artifactory-content.stripe.build/artifactory/github-archives/llvm/llvm-project/releases/download/llvmorg-",
+        "https://github.com/llvm/llvm-project/releases/download/llvmorg-",
+    ],
     llvm_version = "9.0.0",
 )
 
@@ -69,6 +74,19 @@ gemfile_lock_deps(
     ],
 )
 
-BAZEL_INSTALLER_VERSION_linux_SHA = "2fbdc9c0e3d376697caf0ee3673b7c9475214068c55a01b9744891e131f90b87"
+load("@io_bazel_rules_rust//rust:repositories.bzl", "rust_repositories")
 
-BAZEL_INSTALLER_VERSION_darwin_SHA = "c675fa27d99a3114d681db10eb03ded547c40f702b2048c99b8f4ea8e89b9356"
+rust_repositories(
+    edition = "2018",
+    version = "1.46.0",
+)
+
+load("@io_bazel_rules_rust//:workspace.bzl", "bazel_version")
+
+bazel_version(name = "bazel_version")
+
+BAZEL_VERSION = "3.4.1"
+
+BAZEL_INSTALLER_VERSION_linux_SHA = "9808adad931ac652e8ff5022a74507c532250c2091d21d6aebc7064573669cc5"
+
+BAZEL_INSTALLER_VERSION_darwin_SHA = "b168b9c4186916cd07922b1155bca14eecc812729669f1fdbab141f3f4eee2a0"

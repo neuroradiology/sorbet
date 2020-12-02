@@ -29,9 +29,13 @@ class Opus::Types::Test::Props::PropsTest < Critic::Unit::UnitTest
   it 'can validate prop value' do
     MyProps.validate_prop_value :foo, {}
 
-    assert_raises(TypeError) do
+    e = assert_raises(TypeError) do
       MyProps.validate_prop_value :foo, 'nope'
     end
+    assert_equal(
+      "Parameter 'foo': Can't set Opus::Types::Test::Props::PropsTest::MyProps.foo to \"nope\" (instance of String) - need a T::Hash[T.any(String, Symbol), Object]",
+      e.message.split("\n").first,
+    )
 
     assert_raises(RuntimeError) do
       MyProps.validate_prop_value :nope, 'does not matter'
@@ -229,21 +233,43 @@ class Opus::Types::Test::Props::PropsTest < Critic::Unit::UnitTest
       assert(test_model)
       assert_equal(obj.foreign2, test_model.id)
     end
+
+    it 'disallows non-proc arguments' do
+      T::Configuration.expects(:soft_assert_handler).with do |msg, _|
+        msg.include?('Please use a Proc that returns a model class instead')
+      end.times(3)
+
+      Class.new(TestForeignProps) do
+        prop :foreign3, String, foreign: MyTestModel
+      end
+
+      Class.new(TestForeignProps) do
+        prop :foreign3, String, foreign_hint_only: MyTestModel
+      end
+
+      Class.new(TestForeignProps) do
+        prop :foreign3, String, foreign_hint_only: [MyTestModel]
+      end
+    end
   end
 
   class MyCustomType
     extend T::Props::CustomType
 
-    def self.instance?(value)
-      value.is_a?(String)
+    attr_accessor :value
+
+    def initialize(value)
+      @value = value
     end
 
     def self.deserialize(value)
-      value.clone.freeze
+      result = new
+      result.value = value.clone.freeze
+      result
     end
 
     def self.serialize(instance)
-      instance
+      instance.value
     end
   end
 
@@ -261,26 +287,24 @@ class Opus::Types::Test::Props::PropsTest < Critic::Unit::UnitTest
     end
 
     it 'work when plain' do
-      @obj.custom = "foo"
-      assert_equal("foo", @obj.custom)
+      @obj.custom = MyCustomType.new("foo")
+      assert_equal("foo", @obj.custom.value)
     end
 
     it 'work when nilable' do
       @obj.nilable_custom = nil
       assert_nil(@obj.nilable_custom)
 
-      @obj.nilable_custom = "foo"
-      assert_equal("foo", @obj.nilable_custom)
+      @obj.nilable_custom = MyCustomType.new("foo")
+      assert_equal("foo", @obj.nilable_custom.value)
     end
 
     it 'work as collection element' do
-      skip "this isn't supported"
-
       @obj.collection_custom = []
       assert_empty(@obj.collection_custom)
 
-      @obj.collection_custom = ["foo"]
-      assert_equal(["foo"], @obj.collection_custom)
+      @obj.collection_custom = [MyCustomType.new("foo")]
+      assert_equal(["foo"], @obj.collection_custom.map(&:value))
     end
   end
 
@@ -297,6 +321,39 @@ class Opus::Types::Test::Props::PropsTest < Critic::Unit::UnitTest
       assert_nil(obj.untyped)
       obj.untyped = 'foo'
       assert_equal('foo', obj.untyped)
+    end
+  end
+
+  class TypeValidating
+    include T::Props
+    include T::Props::TypeValidation
+  end
+
+  describe 'type validation' do
+    it 'bans plain Object' do
+      assert_raises(T::Props::TypeValidation::UnderspecifiedType) do
+        Class.new(TypeValidating) do
+          prop :object, Object
+        end
+      end
+    end
+
+    it 'allows with DEPRECATED_underspecified_type' do
+      c = Class.new(TypeValidating) do
+        prop :object, Object, DEPRECATED_underspecified_type: true
+      end
+      o = c.new
+      o.object = 1
+      assert_equal(1, o.object)
+    end
+
+    it 'allows T.all' do
+      c = Class.new(TypeValidating) do
+        prop :intersection, T.all(Object, T.enum(["foo"]))
+      end
+      o = c.new
+      o.intersection = "foo"
+      assert_equal("foo", o.intersection)
     end
   end
 

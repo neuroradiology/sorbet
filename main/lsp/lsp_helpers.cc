@@ -4,14 +4,15 @@
 #include "absl/strings/str_split.h"
 #include "common/FileOps.h"
 #include "common/sort.h"
-#include "lsp.h"
+#include "main/lsp/json_types.h"
+#include "main/lsp/lsp.h"
 
 using namespace std;
 
 namespace sorbet::realmain::lsp {
 
 bool hideSymbol(const core::GlobalState &gs, core::SymbolRef sym) {
-    if (!sym.exists() || sym == core::Symbols::root()) {
+    if (!sym.exists() || sym == core::Symbols::root() || sym == core::Symbols::PackageRegistry()) {
         return true;
     }
     auto data = sym.data(gs);
@@ -67,7 +68,7 @@ constexpr int MAX_PRETTY_SIG_ARGS = 4;
 // iff a `def` would be this wide or wider, expand it to be a multi-line def.
 constexpr int MAX_PRETTY_WIDTH = 80;
 
-string prettySigForMethod(const core::GlobalState &gs, core::SymbolRef method, core::TypePtr receiver,
+string prettySigForMethod(const core::GlobalState &gs, core::SymbolRef method, const core::TypePtr &receiver,
                           core::TypePtr retType, const core::TypeConstraint *constraint) {
     ENFORCE(method.exists());
     ENFORCE(method.data(gs)->dealias(gs) == method);
@@ -80,11 +81,11 @@ string prettySigForMethod(const core::GlobalState &gs, core::SymbolRef method, c
         retType = getResultType(gs, method.data(gs)->resultType, method, receiver, constraint);
     }
     string methodReturnType =
-        (retType == core::Types::void_()) ? "void" : absl::StrCat("returns(", retType->show(gs), ")");
+        (retType == core::Types::void_()) ? "void" : absl::StrCat("returns(", retType.show(gs), ")");
     vector<string> typeAndArgNames;
 
     vector<string> flags;
-    const core::SymbolData &sym = method.data(gs);
+    auto sym = method.data(gs);
     string sigCall = "sig";
     if (sym->isMethod()) {
         if (sym->isFinalMethod()) {
@@ -104,7 +105,7 @@ string prettySigForMethod(const core::GlobalState &gs, core::SymbolRef method, c
             if (!argSym.isSyntheticBlockArgument()) {
                 typeAndArgNames.emplace_back(
                     absl::StrCat(argSym.argumentName(gs), ": ",
-                                 getResultType(gs, argSym.type, method, receiver, constraint)->show(gs)));
+                                 getResultType(gs, argSym.type, method, receiver, constraint).show(gs)));
             }
         }
     }
@@ -141,9 +142,9 @@ string prettyDefForMethod(const core::GlobalState &gs, core::SymbolRef method) {
     auto methodData = method.data(gs);
 
     string visibility = "";
-    if (methodData->isPrivate()) {
+    if (methodData->isMethodPrivate()) {
         visibility = "private ";
-    } else if (methodData->isProtected()) {
+    } else if (methodData->isMethodProtected()) {
         visibility = "protected ";
     }
 
@@ -209,8 +210,8 @@ string prettyDefForMethod(const core::GlobalState &gs, core::SymbolRef method) {
     return result;
 }
 
-string prettyTypeForMethod(const core::GlobalState &gs, core::SymbolRef method, core::TypePtr receiver,
-                           core::TypePtr retType, const core::TypeConstraint *constraint) {
+string prettyTypeForMethod(const core::GlobalState &gs, core::SymbolRef method, const core::TypePtr &receiver,
+                           const core::TypePtr &retType, const core::TypeConstraint *constraint) {
     return fmt::format("{}\n{}", prettySigForMethod(gs, method.data(gs)->dealias(gs), receiver, retType, constraint),
                        prettyDefForMethod(gs, method));
 }
@@ -226,7 +227,7 @@ string prettyTypeForConstant(const core::GlobalState &gs, core::SymbolRef consta
         if (!targetClass.data(gs)->attachedClass(gs).exists()) {
             targetClass = targetClass.data(gs)->lookupSingletonClass(gs);
         }
-        result = targetClass.data(gs)->externalType(gs);
+        result = targetClass.data(gs)->externalType();
     } else {
         auto resultType = constant.data(gs)->resultType;
         result = resultType == nullptr ? core::Types::untyped(gs, constant) : resultType;
@@ -236,29 +237,28 @@ string prettyTypeForConstant(const core::GlobalState &gs, core::SymbolRef consta
         // By wrapping the type in `MetaType`, it displays as `<Type: Foo>` rather than `Foo`.
         result = core::make_type<core::MetaType>(result);
     }
-    return result->showWithMoreInfo(gs);
+    return result.showWithMoreInfo(gs);
 }
 
-core::TypePtr getResultType(const core::GlobalState &gs, core::TypePtr type, core::SymbolRef inWhat,
+core::TypePtr getResultType(const core::GlobalState &gs, const core::TypePtr &type, core::SymbolRef inWhat,
                             core::TypePtr receiver, const core::TypeConstraint *constr) {
-    core::Context ctx(gs, inWhat);
     auto resultType = type;
-    if (auto *proxy = core::cast_type<core::ProxyType>(receiver.get())) {
-        receiver = proxy->underlying();
+    if (core::is_proxy_type(receiver)) {
+        receiver = receiver.underlying();
     }
-    if (auto *applied = core::cast_type<core::AppliedType>(receiver.get())) {
+    if (auto *applied = core::cast_type<core::AppliedType>(receiver)) {
         /* instantiate generic classes */
-        resultType = core::Types::resultTypeAsSeenFrom(ctx, resultType, inWhat.data(ctx)->enclosingClass(ctx),
+        resultType = core::Types::resultTypeAsSeenFrom(gs, resultType, inWhat.data(gs)->enclosingClass(gs),
                                                        applied->klass, applied->targs);
     }
     if (!resultType) {
         resultType = core::Types::untypedUntracked();
     }
     if (receiver) {
-        resultType = core::Types::replaceSelfType(ctx, resultType, receiver); // instantiate self types
+        resultType = core::Types::replaceSelfType(gs, resultType, receiver); // instantiate self types
     }
     if (constr) {
-        resultType = core::Types::instantiate(ctx, resultType, *constr); // instantiate generic methods
+        resultType = core::Types::instantiate(gs, resultType, *constr); // instantiate generic methods
     }
     return resultType;
 }
@@ -370,12 +370,12 @@ optional<string> findDocumentation(string_view sourceCode, int beginIndex) {
 
             string_view comment = line.substr(line.find('#') + skip_after_hash);
 
-            documentation_lines.push_back(comment);
+            documentation_lines.emplace_back(comment);
 
             // Account for yarddoc lines by inserting an extra newline right before
             // the yarddoc line (note that we are reverse iterating)
             if (absl::StartsWith(comment, "@")) {
-                documentation_lines.push_back(string_view(""));
+                documentation_lines.emplace_back("");
             }
         }
 
@@ -386,11 +386,11 @@ optional<string> findDocumentation(string_view sourceCode, int beginIndex) {
     }
 
     string documentation = absl::StrJoin(documentation_lines.rbegin(), documentation_lines.rend(), "\n");
-    documentation = absl::StripTrailingAsciiWhitespace(documentation);
+    documentation = string(absl::StripTrailingAsciiWhitespace(documentation));
 
-    if (documentation.empty())
+    if (documentation.empty()) {
         return nullopt;
-    else {
+    } else {
         return documentation;
     }
 }

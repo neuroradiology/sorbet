@@ -1,6 +1,6 @@
 class <emptyTree><<C <root>>> < (::<todo sym>)
   class <emptyTree>::<C GoodUsages><<C <todo sym>>> < (::<todo sym>)
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T.untyped())
     end
 
@@ -8,7 +8,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T.untyped())
     end
 
@@ -16,23 +16,23 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
-      <self>.params({:"arg0" => ::T.untyped()}).returns(::T.untyped())
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
+      <self>.params(:arg0, ::T.untyped()).returns(::T.untyped())
     end
 
     def read_write_predicate=<<C <todo sym>>>(arg0, &<blk>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
-      <self>.params({:"arg0" => ::T.untyped()}).returns(::T.untyped())
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
+      <self>.params(:arg0, ::T.untyped()).returns(::T.untyped())
     end
 
     def self.read_write_predicate=<<C <todo sym>>>(arg0, &<blk>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T::<C Boolean>)
     end
 
@@ -40,7 +40,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       false
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T::<C Boolean>)
     end
 
@@ -48,7 +48,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       false
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T.untyped())
     end
 
@@ -56,7 +56,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T.untyped())
     end
 
@@ -64,23 +64,23 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
-      <self>.params({:"arg0" => ::T.untyped()}).returns(::T.untyped())
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
+      <self>.params(:arg0, ::T.untyped()).returns(::T.untyped())
     end
 
     def foo=<<C <todo sym>>>(arg0, &<blk>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
-      <self>.params({:"arg0" => ::T.untyped()}).returns(::T.untyped())
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
+      <self>.params(:arg0, ::T.untyped()).returns(::T.untyped())
     end
 
     def self.foo=<<C <todo sym>>>(arg0, &<blk>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T::<C Boolean>)
     end
 
@@ -88,7 +88,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       false
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T::<C Boolean>)
     end
 
@@ -96,7 +96,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       false
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T.untyped())
     end
 
@@ -104,15 +104,15 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
-      <self>.params({:"arg0" => ::T.untyped()}).returns(::T.untyped())
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
+      <self>.params(:arg0, ::T.untyped()).returns(::T.untyped())
     end
 
     def self.no_instance=<<C <todo sym>>>(arg0, &<blk>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T::<C Boolean>)
     end
 
@@ -120,7 +120,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       false
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T.untyped())
     end
 
@@ -128,23 +128,23 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
-      <self>.params({:"arg0" => ::T.untyped()}).returns(::T.untyped())
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
+      <self>.params(:arg0, ::T.untyped()).returns(::T.untyped())
     end
 
     def no_instance_reader=<<C <todo sym>>>(arg0, &<blk>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
-      <self>.params({:"arg0" => ::T.untyped()}).returns(::T.untyped())
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
+      <self>.params(:arg0, ::T.untyped()).returns(::T.untyped())
     end
 
     def self.no_instance_reader=<<C <todo sym>>>(arg0, &<blk>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T::<C Boolean>)
     end
 
@@ -152,7 +152,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       false
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T.untyped())
     end
 
@@ -160,7 +160,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T.untyped())
     end
 
@@ -168,15 +168,15 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
-      <self>.params({:"arg0" => ::T.untyped()}).returns(::T.untyped())
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
+      <self>.params(:arg0, ::T.untyped()).returns(::T.untyped())
     end
 
     def self.no_instance_writer=<<C <todo sym>>>(arg0, &<blk>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T::<C Boolean>)
     end
 
@@ -184,7 +184,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       false
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T::<C Boolean>)
     end
 
@@ -192,7 +192,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       false
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T.untyped())
     end
 
@@ -200,7 +200,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T.untyped())
     end
 
@@ -208,23 +208,23 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
-      <self>.params({:"arg0" => ::T.untyped()}).returns(::T.untyped())
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
+      <self>.params(:arg0, ::T.untyped()).returns(::T.untyped())
     end
 
     def bar=<<C <todo sym>>>(arg0, &<blk>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
-      <self>.params({:"arg0" => ::T.untyped()}).returns(::T.untyped())
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
+      <self>.params(:arg0, ::T.untyped()).returns(::T.untyped())
     end
 
     def self.bar=<<C <todo sym>>>(arg0, &<blk>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T.untyped())
     end
 
@@ -232,7 +232,7 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
       <self>.returns(::T.untyped())
     end
 
@@ -240,23 +240,23 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
-      <self>.params({:"arg0" => ::T.untyped()}).returns(::T.untyped())
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
+      <self>.params(:arg0, ::T.untyped()).returns(::T.untyped())
     end
 
     def no_predicate=<<C <todo sym>>>(arg0, &<blk>)
       <emptyTree>
     end
 
-    ::T::Sig::WithoutRuntime.sig() do ||
-      <self>.params({:"arg0" => ::T.untyped()}).returns(::T.untyped())
+    ::Sorbet::Private::Static.sig(::T::Sig::WithoutRuntime) do ||
+      <self>.params(:arg0, ::T.untyped()).returns(::T.untyped())
     end
 
     def self.no_predicate=<<C <todo sym>>>(arg0, &<blk>)
       <emptyTree>
     end
 
-    <self>.sig() do ||
+    ::Sorbet::Private::Static.sig(<self>) do ||
       <self>.void()
     end
 
@@ -282,71 +282,71 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
 
     <self>.extend(<emptyTree>::<C T>::<C Sig>)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"read_write_predicate")
+    ::Sorbet::Private::Static.keep_def(<self>, :read_write_predicate)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"read_write_predicate")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :read_write_predicate)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"read_write_predicate=")
+    ::Sorbet::Private::Static.keep_def(<self>, :read_write_predicate=)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"read_write_predicate=")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :read_write_predicate=)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"read_write_predicate?")
+    ::Sorbet::Private::Static.keep_def(<self>, :read_write_predicate?)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"read_write_predicate?")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :read_write_predicate?)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"foo")
+    ::Sorbet::Private::Static.keep_def(<self>, :foo)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"foo")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :foo)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"foo=")
+    ::Sorbet::Private::Static.keep_def(<self>, :foo=)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"foo=")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :foo=)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"foo?")
+    ::Sorbet::Private::Static.keep_def(<self>, :foo?)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"foo?")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :foo?)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"no_instance")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :no_instance)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"no_instance=")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :no_instance=)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"no_instance?")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :no_instance?)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"no_instance_reader")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :no_instance_reader)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"no_instance_reader=")
+    ::Sorbet::Private::Static.keep_def(<self>, :no_instance_reader=)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"no_instance_reader=")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :no_instance_reader=)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"no_instance_reader?")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :no_instance_reader?)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"no_instance_writer")
+    ::Sorbet::Private::Static.keep_def(<self>, :no_instance_writer)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"no_instance_writer")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :no_instance_writer)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"no_instance_writer=")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :no_instance_writer=)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"no_instance_writer?")
+    ::Sorbet::Private::Static.keep_def(<self>, :no_instance_writer?)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"no_instance_writer?")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :no_instance_writer?)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"bar")
+    ::Sorbet::Private::Static.keep_def(<self>, :bar)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"bar")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :bar)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"bar=")
+    ::Sorbet::Private::Static.keep_def(<self>, :bar=)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"bar=")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :bar=)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"no_predicate")
+    ::Sorbet::Private::Static.keep_def(<self>, :no_predicate)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"no_predicate")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :no_predicate)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"no_predicate=")
+    ::Sorbet::Private::Static.keep_def(<self>, :no_predicate=)
 
-    ::Sorbet::Private::Static.keep_self_def(<self>, :"no_predicate=")
+    ::Sorbet::Private::Static.keep_self_def(<self>, :no_predicate=)
 
-    ::Sorbet::Private::Static.keep_def(<self>, :"usages")
+    ::Sorbet::Private::Static.keep_def(<self>, :usages)
 
     <self>.read_write_predicate()
 
@@ -382,12 +382,12 @@ class <emptyTree><<C <root>>> < (::<todo sym>)
   class <emptyTree>::<C IgnoredUsages><<C <todo sym>>> < (::<todo sym>)
     <self>.class_attribute()
 
-    <self>.class_attribute({:"instance_accessor" => false})
+    <self>.class_attribute(:instance_accessor, false)
 
     <self>.class_attribute("foo")
   end
 
   module <emptyTree>::<C NotAvailableInModule><<C <todo sym>>> < ()
-    <self>.class_attribute(:"foo", :"bar")
+    <self>.class_attribute(:foo, :bar)
   end
 end

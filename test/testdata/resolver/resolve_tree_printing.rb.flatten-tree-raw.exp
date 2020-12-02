@@ -6,7 +6,7 @@ InsSeq{
       name = EmptyTree<<C <U <root>>>>
       ancestors = [ConstantLit{
           orig = nullptr
-          symbol = ::<todo sym>
+          symbol = (class ::<todo sym>)
         }]
       rhs = [
         MethodDef{
@@ -17,21 +17,36 @@ InsSeq{
             }]
           rhs = InsSeq{
             stats = [
-              EmptyTree
               Send{
                 recv = ConstantLit{
                   orig = nullptr
-                  symbol = ::Sorbet::Private::Static
+                  symbol = (class ::<Magic>)
+                }
+                fun = <U <define-top-class-or-module>>
+                block = nullptr
+                pos_args = 1
+                args = [
+                  ConstantLit{
+                    orig = nullptr
+                    symbol = (class ::A)
+                  }
+                ]
+              }
+              Send{
+                recv = ConstantLit{
+                  orig = nullptr
+                  symbol = (module ::Sorbet::Private::Static)
                 }
                 fun = <U keep_for_ide>
                 block = nullptr
+                pos_args = 1
                 args = [
                   ConstantLit{
                     orig = UnresolvedConstantLit{
                       scope = EmptyTree
                       cnst = <C <U A>>
                     }
-                    symbol = ::A
+                    symbol = (class ::A)
                   }
                 ]
               }
@@ -48,11 +63,11 @@ InsSeq{
           scope = EmptyTree
           cnst = <C <U A>>
         }
-        symbol = ::A
+        symbol = (class ::A)
       }<<C <U A>>>
       ancestors = [ConstantLit{
           orig = nullptr
-          symbol = ::<todo sym>
+          symbol = (class ::<todo sym>)
         }]
       rhs = [
         MethodDef{
@@ -69,6 +84,7 @@ InsSeq{
               }
               fun = <U has_while>
               block = nullptr
+              pos_args = 0
               args = [
               ]
             }
@@ -86,7 +102,7 @@ InsSeq{
               scope = EmptyTree
               cnst = <C <U DOES_NOT_EXIST>>
             }
-            symbol = ::Sorbet::Private::Static::StubModule
+            symbol = (module ::Sorbet::Private::Static::StubModule)
             resolutionScopes = [::A, ::<root>]
           }
         }
@@ -131,6 +147,7 @@ InsSeq{
               ]
               body = Next{ expr = EmptyTree }
             }
+            pos_args = 0
             args = [
             ]
           }
@@ -152,6 +169,7 @@ InsSeq{
               ]
               body = Break{ expr = EmptyTree }
             }
+            pos_args = 0
             args = [
             ]
           }
@@ -177,10 +195,11 @@ InsSeq{
               Send{
                 recv = ConstantLit{
                   orig = nullptr
-                  symbol = ::Sorbet::Private::Static
+                  symbol = (module ::Sorbet::Private::Static)
                 }
                 fun = <U keep_for_typechecking>
                 block = nullptr
+                pos_args = 1
                 args = [
                   Send{
                     recv = ConstantLit{
@@ -188,17 +207,18 @@ InsSeq{
                         scope = EmptyTree
                         cnst = <C <U T>>
                       }
-                      symbol = ::T
+                      symbol = (module ::T)
                     }
                     fun = <U nilable>
                     block = nullptr
+                    pos_args = 1
                     args = [
                       ConstantLit{
                         orig = UnresolvedConstantLit{
                           scope = EmptyTree
                           cnst = <C <U Integer>>
                         }
-                        symbol = ::Integer
+                        symbol = (class ::Integer)
                       }
                     ]
                   }
@@ -225,113 +245,121 @@ InsSeq{
               Send{
                 recv = ConstantLit{
                   orig = nullptr
-                  symbol = ::Sorbet::Private::Static
+                  symbol = (module ::Sorbet::Private::Static)
                 }
                 fun = <U keep_def>
                 block = nullptr
+                pos_args = 2
                 args = [
                   Local{
                     localVariable = <U <self>>
                   }
-                  Literal{ value = :"has_while" }
+                  Literal{ value = :has_while }
                 ]
               }
               Send{
                 recv = ConstantLit{
                   orig = nullptr
-                  symbol = ::Sorbet::Private::Static
+                  symbol = (module ::Sorbet::Private::Static)
                 }
                 fun = <U keep_def>
                 block = nullptr
+                pos_args = 2
                 args = [
                   Local{
                     localVariable = <U <self>>
                   }
-                  Literal{ value = :"has_constant_with_resolution_scope" }
+                  Literal{ value = :has_constant_with_resolution_scope }
                 ]
               }
               Send{
                 recv = ConstantLit{
                   orig = nullptr
-                  symbol = ::Sorbet::Private::Static
+                  symbol = (module ::Sorbet::Private::Static)
                 }
                 fun = <U keep_def>
                 block = nullptr
+                pos_args = 2
                 args = [
                   Local{
                     localVariable = <U <self>>
                   }
-                  Literal{ value = :"has_global_field" }
+                  Literal{ value = :has_global_field }
                 ]
               }
               Send{
                 recv = ConstantLit{
                   orig = nullptr
-                  symbol = ::Sorbet::Private::Static
+                  symbol = (module ::Sorbet::Private::Static)
                 }
                 fun = <U keep_def>
                 block = nullptr
+                pos_args = 2
                 args = [
                   Local{
                     localVariable = <U <self>>
                   }
-                  Literal{ value = :"has_class_field" }
+                  Literal{ value = :has_class_field }
                 ]
               }
               Send{
                 recv = ConstantLit{
                   orig = nullptr
-                  symbol = ::Sorbet::Private::Static
+                  symbol = (module ::Sorbet::Private::Static)
                 }
                 fun = <U keep_def>
                 block = nullptr
+                pos_args = 2
                 args = [
                   Local{
                     localVariable = <U <self>>
                   }
-                  Literal{ value = :"has_next" }
+                  Literal{ value = :has_next }
                 ]
               }
               Send{
                 recv = ConstantLit{
                   orig = nullptr
-                  symbol = ::Sorbet::Private::Static
+                  symbol = (module ::Sorbet::Private::Static)
                 }
                 fun = <U keep_def>
                 block = nullptr
+                pos_args = 2
                 args = [
                   Local{
                     localVariable = <U <self>>
                   }
-                  Literal{ value = :"has_break" }
+                  Literal{ value = :has_break }
                 ]
               }
               Send{
                 recv = ConstantLit{
                   orig = nullptr
-                  symbol = ::Sorbet::Private::Static
+                  symbol = (module ::Sorbet::Private::Static)
                 }
                 fun = <U keep_def>
                 block = nullptr
+                pos_args = 2
                 args = [
                   Local{
                     localVariable = <U <self>>
                   }
-                  Literal{ value = :"has_return" }
+                  Literal{ value = :has_return }
                 ]
               }
               Send{
                 recv = ConstantLit{
                   orig = nullptr
-                  symbol = ::Sorbet::Private::Static
+                  symbol = (module ::Sorbet::Private::Static)
                 }
                 fun = <U keep_def>
                 block = nullptr
+                pos_args = 2
                 args = [
                   Local{
                     localVariable = <U <self>>
                   }
-                  Literal{ value = :"has_cast" }
+                  Literal{ value = :has_cast }
                 ]
               }
             ],

@@ -1,5 +1,6 @@
 #include "main/lsp/requests/signature_help.h"
 #include "core/lsp/QueryResponse.h"
+#include "main/lsp/json_types.h"
 #include "main/lsp/lsp.h"
 
 using namespace std;
@@ -36,7 +37,7 @@ void addSignatureHelpItem(const core::GlobalState &gs, core::SymbolRef method,
         }
         parameter->documentation = getResultType(gs, arg.type, method, resp.dispatchResult->main.receiver,
                                                  resp.dispatchResult->main.constr.get())
-                                       ->show(gs);
+                                       .show(gs);
         parameters.push_back(move(parameter));
         i += 1;
     }

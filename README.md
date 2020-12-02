@@ -4,10 +4,9 @@
 
 # Sorbet
 
-This repository contains Sorbet, a static typechecker for a subset of Ruby. It
-is still in early stages, but is mature enough to run on the majority of Ruby
-code at Stripe. You are welcome to try it, though, but your experience might
-still be rough.
+This repository contains Sorbet, a fast, powerful type checker designed for Ruby.
+It aims to be easy to add to existing codebases with gradual types, and fast to
+respond with errors and suggestions.
 
 This README contains documentation specifically for contributing to Sorbet. You
 might also want to:
@@ -41,13 +40,11 @@ docs about Stripe-specific development workflows and historical Stripe context.
     - [Testing "Go to Type Definition"](#testing-go-to-type-definition)
     - [Testing hover](#testing-hover)
     - [Testing completion](#testing-completion)
-    - [Testing incremental typechecking](#testing-incremental-typechecking)
+    - [Testing workspace symbols (symbol search)](#testing-workspace-symbols-symbol-search)
+    - [Testing incremental type checking](#testing-incremental-type-checking)
   - [LSP recorded tests](#lsp-recorded-tests)
   - [Updating tests](#updating-tests)
-- [C++ conventions](#c-conventions)
-- [Debugging and profiling](#debugging-and-profiling)
-  - [Debugging](#debugging)
-  - [Profiling](#profiling)
+- [Debugging](#debugging)
 - [Writing docs](#writing-docs)
 - [Editor and environment](#editor-and-environment)
   - [Bazel](#bazel)
@@ -60,7 +57,7 @@ docs about Stripe-specific development workflows and historical Stripe context.
 
 ## Sorbet user-facing design principles
 
-Early in our project we've defined some guidelines for how working with sorbet should feel like.
+Early in our project, we've defined some guidelines for how working with sorbet should feel like.
 
 1. **Explicit**
 
@@ -86,7 +83,7 @@ Early in our project we've defined some guidelines for how working with sorbet s
 
 4. **Compatible with Ruby**
 
-    In particular, we don't want new syntax. Existing Ruby syntax means
+    In particular, we don't want a new syntax. Existing Ruby syntax means
     we can leverage most of our existing tooling (editors, etc). Also,
     the point of Sorbet is to gradually improve an existing Ruby codebase. No
     new syntax makes it easier to be compatible with existing tools.
@@ -94,7 +91,7 @@ Early in our project we've defined some guidelines for how working with sorbet s
 5. **Scales**
 
     On all axes: execution speed, number of collaborators, lines of code,
-    codebase age. We work in large Ruby code bases, and they will only get
+    codebase age. We work in large Ruby codebases, and they will only get
     larger.
 
 6. **Can be adopted gradually**
@@ -179,7 +176,7 @@ debugging is
 --config=dbg --config=sanitize
 ```
 
-In tools/bazel.rc you can find out what all these options (and others) mean.
+In `.bazelrc` you can find out what all these options (and others) mean.
 
 ### Common Compilation Errors
 
@@ -205,13 +202,19 @@ sudo xcodebuild -license
 bazel clean --expunge
 ```
 
-**(Mac) `fatal error: 'stdio.h' file not found`** (or some other system header)
+**(Mac) `fatal error: 'math.h' file not found`** (or some other system header)
 
 This error can happen on Macs when the `/usr/include` folder is missing. The
 solution is to install macOS headers via the following package:
 
+macOS Mojave:
 ```shell
 open /Library/Developer/CommandLineTools/Packages/macOS_SDK_headers_for_macOS_10.14.pkg
+```
+
+macOS Catalina:
+```shell
+sudo ln -s /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/* /usr/local/include/
 ```
 
 ## Running Sorbet
@@ -310,7 +313,7 @@ We aspire to have our tests be fully reproducible.
 
 There are many ways to test Sorbet, some "better" than others. We've ordered
 them below in order from most preferable to least preferable. And we always
-prefer some test to no tests!
+prefer some tests to no tests!
 
 ### test_corpus tests
 
@@ -318,13 +321,13 @@ The first kind of test can be called either [test_corpus] tests or [testdata]
 tests, based on the name of the test harness or the folder containing these tests, respectively.
 
 
-[test_corpus]: test/test_corpus.cc
+[test_corpus]: test/pipeline_test_runner.cc
 [testdata]: test/testdata/
 
 To create a test_corpus test, add any file `<name>.rb` to `test/testdata`, in
 any folder depth. The file must either:
 
-- typecheck entirely, or
+- type check entirely, or
 - throw errors **only** on lines marked with a comment (see below).
 
 To mark that a line should have errors, append `# error: <message>` (the
@@ -378,7 +381,7 @@ Our bazel setup will produce two targets:
   the `.out` file.
 
 The scripts are run inside Bazel, so they will be executed from the top of the
-workspace and have access to sources files and built targets using their path
+workspace and have access to source files and built targets using their path
 from the root. In particular, the compiled sorbet binary is available under
 `main/sorbet`.
 
@@ -418,12 +421,57 @@ If a variable is re-defined, it can be annotated with a version number:
     # ^ usage: a 2
 ```
 
+`usage` annotations can accept multiple version numbers, separated by a `,`. This is useful if you have variables that
+get re-defined through multiple-paths:
+
+```ruby
+  if some_condition
+    a = 10
+  # ^ def a 1
+  else
+    a = 'hello'
+  # ^ def: a 2
+  end
+
+  p a
+  # ^ usage: a 1,2
+```
+
 If a location should not report any definition or usage, then use the magic label `(nothing)`:
 
 ```ruby
     a = 10
 # ^ def: (nothing)
 ```
+
+If a location should report multiple definitions (e.g., a class or module opened
+in multiple files), then you can add a second `def` with the same name:
+
+```ruby
+class Foo
+  #   ^^^ def: foo
+end
+
+class Foo
+  #   ^^^ def: foo
+end
+```
+
+When marking definitions that correspond to method arguments that have defaults, multiple definitions will need to be
+marked: one for the argument definition itself and one for its default value. The default value needs to be given a
+different version number, and also marked `default-arg-value`:
+
+```ruby
+  def foo(a: 1)
+        # ^ def: a 1
+           # ^ def: a 2 default-arg-value
+    p a
+    # ^ usage: a 1,2
+  end
+```
+
+This is due to the translation of defaults into the CFG: there is a synthetic conditional that chooses either to
+initialize the variable from the argument passed at the send, or to the default value when no value is present.
 
 #### Testing "Go to Type Definition"
 
@@ -572,12 +620,118 @@ and verify that you're seeing your changes. For documentation specifically,
 nearly all the code paths are shared with hover, so you can alternatively write
 a hover test.
 
+#### Testing workspace symbols (symbol search)
 
-#### Testing incremental typechecking
+LSP tests can assert that a specific item appears in a symbol search (the
+`textDocument/workspaceSymbols` request) using the `symbol-search` assertion:
+
+```ruby
+class Project::Foo
+#     ^^^ symbol-search: "Foo"
+end
+```
+
+The `symbol-search` can optionally specify _how_ that item should appear in
+search results:
+
+```ruby
+class Project::Foo
+#     ^^^ symbol-search: "Foo", name = "Foo", container = "Project"
+end
+```
+
+In the above, `container` can also be the special string `"(nothing)"` to
+indicate that the item has no container.
+
+`symbol-search` can also specify the item's relative rank in the ordered
+search results:
+
+```ruby
+class Project::Foo
+#     ^^^ symbol-search: "Foo", rank = 1
+end
+```
+
+#### Testing rename constant
+
+To write a test for renaming constants, you need to make at least two files:
+
+```ruby
+# -- test/testdata/lsp/refactor/mytest.rb --
+
+# typed: true
+# frozen_string_literal: true
+
+class Foo
+  class Foo
+  end
+end
+
+foo = Foo.new
+#     ^ apply-rename: [A] newName: Bar
+```
+
+The `apply-rename` assertion here says "simulate a user starting a rename from
+the position of this caret." You'll need to add an `.rbedited` file that reflects
+what the result of the changes should look like. In this case, the file would look
+like this:
+
+```ruby
+# -- test/testdata/lsp/refactor/mytest.A.rbedited --
+
+# typed: true
+# frozen_string_literal: true
+
+class Bar
+  class Foo
+  end
+end
+
+foo = Bar.new
+#     ^ apply-rename: [A] newName: Bar
+```
+
+You can test that invalid renames aren't applied by adding `invalid: true` to your
+test, like so:
+```ruby
+# -- test/testdata/lsp/refactor/mytest.rb --
+
+# typed: true
+# frozen_string_literal: true
+
+class Foo
+  class Foo
+  end
+end
+
+foo = Foo.new
+#     ^ apply-rename: [A] newName: foo invalid:true
+```
+
+To test for a specific error message, add an `expectedErrorMessage` argument to the test:
+```ruby
+# typed: true
+# frozen_string_literal: true
+
+require_relative './constant__class_definition.rb'
+
+sig { params(foo: Foo::Foo).returns(Foo::Foo) }
+def foo(foo); end
+
+class Baz
+#     ^ apply-rename: [D] newName: Bar invalid: true expectedErrorMessage: Renaming constants defined in .rbi files is not supported; symbol Baz is defined at test/testdata/lsp/rename/constant__rbi_class_reference.rbi
+
+end
+```
+
+You can add more files that reference the constant you're renaming, just make sure
+to add a matching `.rbedited` file with the same version.
+
+#### Testing incremental type checking
 
 In LSP mode, Sorbet runs file updates on a *fast path* or a *slow path*. It checks the structure of the
 file before and after the update to determine if the change is covered under the fast path. If it is,
-it performs further processing to determine the set of files that need to be typechecked.
+it performs further processing to determine the set of files that need to be type checked.
 
 LSP tests can define file updates in `<name>.<version>.rbupdate` files which contain the contents of `<name>.rb`
 after the update occurs. For example, the file `foo.1.rbupdate` contains the updated contents of `foo.rb`.
@@ -633,6 +787,9 @@ tools/scripts/update_testdata_exp.sh test/testdata/cfg/next.rb
 
 # Only update the `*.out` files in `test/cli`
 bazel test //test/cli:update
+
+# Update the `*.exp` files in `gems/sorbet/test/hidden-method-finder`
+gems/sorbet/test/hidden-method-finder/update_hidden_methods_exp.sh
 ```
 
 
@@ -735,6 +892,14 @@ To build a `compile_commands.json` file for Sorbet with bazel:
 ```
 tools/scripts/build_compilation_db.sh
 ```
+
+This builds a `./compile_commands.json` file (that is gitignored). This file
+hard-codes some paths into the Bazel sandbox. These files can get stale,
+especially when they're generated by Bazel `genrule`'s. In particular, the
+`./compile_commands.json` references files in Bazel's `dbg` configuration (e.g.,
+whatever was last built with `-c opt` / `--compilation_mode=opt`). If you're
+seeing stale errors, consider running a command like `./bazel build
+//main:sorbet -c opt`.
 
 You are encouraged to play around with various clang-based tools which use the
 `compile_commands.json` database. Some suggestions:

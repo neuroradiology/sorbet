@@ -202,53 +202,6 @@ string DidChangeTextDocumentParams::getSource(string_view oldFileContents) const
     return rv;
 }
 
-void LSPFileUpdates::mergeOlder(const LSPFileUpdates &older) {
-    editCount += older.editCount;
-    hasNewFiles = hasNewFiles || older.hasNewFiles;
-    cancellationExpected = cancellationExpected || older.cancellationExpected;
-    preemptionsExpected += older.preemptionsExpected;
-
-    ENFORCE(updatedFiles.size() == updatedFileHashes.size());
-    ENFORCE(updatedFiles.size() == updatedFileIndexes.size());
-    ENFORCE(older.updatedFiles.size() == older.updatedFileHashes.size());
-    ENFORCE(older.updatedFiles.size() == older.updatedFileIndexes.size());
-
-    // For updates, we prioritize _newer_ updates.
-    UnorderedSet<string> encountered;
-    for (auto &f : updatedFiles) {
-        encountered.emplace(f->path());
-    }
-
-    int i = -1;
-    for (auto &f : older.updatedFiles) {
-        i++;
-        if (encountered.contains(f->path())) {
-            continue;
-        }
-        encountered.emplace(f->path());
-        updatedFiles.push_back(f);
-        updatedFileHashes.push_back(older.updatedFileHashes[i]);
-        auto &ast = older.updatedFileIndexes[i];
-        updatedFileIndexes.push_back(ast::ParsedFile{ast.tree->deepCopy(), ast.file});
-    }
-}
-
-LSPFileUpdates LSPFileUpdates::copy() const {
-    LSPFileUpdates copy;
-    copy.epoch = epoch;
-    copy.editCount = editCount;
-    copy.canTakeFastPath = canTakeFastPath;
-    copy.hasNewFiles = hasNewFiles;
-    copy.updatedFiles = updatedFiles;
-    copy.updatedFileHashes = updatedFileHashes;
-    copy.cancellationExpected = cancellationExpected;
-    copy.preemptionsExpected = preemptionsExpected;
-    for (auto &ast : updatedFileIndexes) {
-        copy.updatedFileIndexes.push_back(ast::ParsedFile{ast.tree->deepCopy(), ast.file});
-    }
-    return copy;
-}
-
 void SorbetWorkspaceEditParams::merge(SorbetWorkspaceEditParams &newerParams) {
     // 'newerParams' has newer updates, so merge its contents into this object.
     epoch = newerParams.epoch;
@@ -270,6 +223,10 @@ void SorbetWorkspaceEditParams::merge(SorbetWorkspaceEditParams &newerParams) {
     mergeCount += newerParams.mergeCount + 1;
     sorbetCancellationExpected = sorbetCancellationExpected || newerParams.sorbetCancellationExpected;
     sorbetPreemptionsExpected += newerParams.sorbetPreemptionsExpected;
+    // Consume newerParams' diagnostic latency timers.
+    diagnosticLatencyTimers.insert(diagnosticLatencyTimers.end(),
+                                   make_move_iterator(newerParams.diagnosticLatencyTimers.begin()),
+                                   make_move_iterator(newerParams.diagnosticLatencyTimers.end()));
 }
 
 } // namespace sorbet::realmain::lsp

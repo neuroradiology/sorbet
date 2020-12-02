@@ -10,7 +10,7 @@
 namespace spd = spdlog;
 namespace sorbet {
 class WorkerPoolImpl : public WorkerPool {
-    int size;
+    int _size;
     // Tune queue for small size
     struct ConcurrentQueueCustomTraits {
         // General-purpose size type. std::size_t is strongly recommended.
@@ -65,7 +65,7 @@ class WorkerPoolImpl : public WorkerPool {
         // Enqueue operations that would cause this limit to be surpassed will fail. Note
         // that this limit is enforced at the block level (for performance reasons), i.e.
         // it's rounded up to the nearest block size.
-        static const size_t MAX_SUBQUEUE_SIZE = 4;
+        static const size_t MAX_SUBQUEUE_SIZE = 8;
 
         // Memory allocation can be customized if needed.
         // malloc should return nullptr on failure, and handle alignment like std::malloc.
@@ -90,6 +90,7 @@ public:
     ~WorkerPoolImpl();
 
     void multiplexJob(std::string_view taskName, Task t) override;
+    int size() override;
 };
 };     // namespace sorbet
 #endif // SORBET_WORKERPOOL_IMPL_H

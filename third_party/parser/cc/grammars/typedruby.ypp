@@ -21,10 +21,10 @@ using namespace std::string_literals;
 #endif
 }
 
-%param { ruby_parser::typedruby25& driver }
+%param { ruby_parser::typedruby27& driver }
 %parse-param { ruby_parser::SelfPtr self }
-%define api.namespace {ruby_parser::bison::typedruby25}
-%define api.prefix {typedruby25}
+%define api.namespace {ruby_parser::bison::typedruby27}
+%define api.prefix {typedruby27}
 %define api.value.type { union parser_value }
 %define api.token.constructor false
 %define parse.assert
@@ -34,55 +34,56 @@ using namespace std::string_literals;
 // if any of these token values are changed here, the header must be updated
 // as well.
 %token <token>
-  kCLASS              1001
-  kMODULE             1002
-  kDEF                1003
-  kUNDEF              1004
-  kBEGIN              1005
-  kRESCUE             1006
-  kENSURE             1007
-  kEND                1008
-  kIF                 1009
-  kUNLESS             1010
-  kTHEN               1011
-  kELSIF              1012
-  kELSE               1013
-  kCASE               1014
-  kWHEN               1015
-  kWHILE              1016
-  kUNTIL              1017
-  kFOR                1018
-  kBREAK              1019
-  kNEXT               1020
-  kREDO               1021
-  kRETRY              1022
-  kIN                 1023
-  kDO                 1024
+  eof                 0       "end of file"
+  kCLASS              1001    "class"
+  kMODULE             1002    "module"
+  kDEF                1003    "def"
+  kUNDEF              1004    "undef"
+  kBEGIN              1005    "begin"
+  kRESCUE             1006    "rescue"
+  kENSURE             1007    "ensure"
+  kEND                1008    "end"
+  kIF                 1009    "if"
+  kUNLESS             1010    "unless"
+  kTHEN               1011    "then"
+  kELSIF              1012    "elsif"
+  kELSE               1013    "else"
+  kCASE               1014    "case"
+  kWHEN               1015    "when"
+  kWHILE              1016    "while"
+  kUNTIL              1017    "until"
+  kFOR                1018    "for"
+  kBREAK              1019    "break"
+  kNEXT               1020    "next"
+  kREDO               1021    "redo"
+  kRETRY              1022    "retry"
+  kIN                 1023    "in"
+  kDO                 1024    "do"
   kDO_COND            1025
   kDO_BLOCK           1026
   kDO_LAMBDA          1027
-  kRETURN             1028
-  kYIELD              1029
-  kSUPER              1030
-  kSELF               1031
-  kNIL                1032
-  kTRUE               1033
-  kFALSE              1034
-  kAND                1035
-  kOR                 1036
-  kNOT                1037
+  kRETURN             1028    "return"
+  kYIELD              1029    "yield"
+  kSUPER              1030    "super"
+  kSELF               1031    "self"
+  kNIL                1032    "nil"
+  kTRUE               1033    "true"
+  kFALSE              1034    "false"
+  kAND                1035    "and"
+  kOR                 1036    "or"
+  kNOT                1037    "not"
   kIF_MOD             1038
   kUNLESS_MOD         1039
   kWHILE_MOD          1040
   kUNTIL_MOD          1041
   kRESCUE_MOD         1042
-  kALIAS              1043
-  kDEFINED            1044
-  klBEGIN             1045
-  klEND               1046
-  k__LINE__           1047
-  k__FILE__           1048
-  k__ENCODING__       1049
+  kALIAS              1043    "alias"
+  kDEFINED            1044    "defined?"
+  klBEGIN             1045    "BEGIN"
+  klEND               1046    "END"
+  k__LINE__           1047    "__LINE__"
+  k__FILE__           1048    "__FILE__"
+  k__ENCODING__       1049    "__ENCODING__"
   tIDENTIFIER         1050
   tFID                1051
   tGVAR               1052
@@ -99,55 +100,55 @@ using namespace std::string_literals;
   tUMINUS             1063
   tUNARY_NUM          1064
   tPOW                1065
-  tCMP                1066
-  tEQ                 1067
-  tEQQ                1068
-  tNEQ                1069
-  tEQL                1070
-  tGEQ                1071
-  tLEQ                1072
-  tANDOP              1073
-  tOROP               1074
-  tMATCH              1075
-  tNMATCH             1076
-  tDOT                1077
-  tDOT2               1078
-  tDOT3               1079
-  tAREF               1080
-  tASET               1081
-  tLSHFT              1082
-  tRSHFT              1083
-  tCOLON2             1084
+  tCMP                1066    "<=>"
+  tEQ                 1067    "=="
+  tEQQ                1068    "==="
+  tNEQ                1069    "!="
+  tEQL                1070    "="
+  tGEQ                1071    ">="
+  tLEQ                1072    "<="
+  tANDOP              1073    "&&"
+  tOROP               1074    "||"
+  tMATCH              1075    "=~"
+  tNMATCH             1076    "!~"
+  tDOT                1077    "."
+  tDOT2               1078    ".."
+  tDOT3               1079    "..."
+  tAREF               1080    "[]"
+  tASET               1081    "[]="
+  tLSHFT              1082    "<<"
+  tRSHFT              1083    ">>"
+  tCOLON2             1084    "::"
   tCOLON3             1085
   tOP_ASGN            1086
-  tASSOC              1087
-  tLPAREN             1088
+  tASSOC              1087    "=>"
+  tLPAREN             1088    "("
   tLPAREN2            1089
-  tRPAREN             1090
+  tRPAREN             1090    ")"
   tLPAREN_ARG         1091
-  tLBRACK             1092
+  tLBRACK             1092    "["
   tLBRACK2            1093
-  tRBRACK             1094
-  tLBRACE             1095
+  tRBRACK             1094    "]"
+  tLBRACE             1095    "{"
   tLBRACE_ARG         1096
-  tSTAR               1097
+  tSTAR               1097    "*"
   tSTAR2              1098
-  tAMPER              1099
+  tAMPER              1099    "&"
   tAMPER2             1100
-  tTILDE              1101
-  tPERCENT            1102
-  tDIVIDE             1103
-  tDSTAR              1104
-  tPLUS               1105
-  tMINUS              1106
-  tLT                 1107
-  tGT                 1108
-  tPIPE               1109
-  tBANG               1110
-  tCARET              1111
+  tTILDE              1101    "~"
+  tPERCENT            1102    "%"
+  tDIVIDE             1103    "/"
+  tDSTAR              1104    "**"
+  tPLUS               1105    "+"
+  tMINUS              1106    "-"
+  tLT                 1107    "<"
+  tGT                 1108    ">"
+  tPIPE               1109    "|"
+  tBANG               1110    "!"
+  tCARET              1111    "^"
   tLCURLY             1112
   tRCURLY             1113
-  tBACK_REF2          1114
+  tBACK_REF2          1114    "`"
   tSYMBEG             1115
   tSTRING_BEG         1116
   tXSTRING_BEG        1117
@@ -164,20 +165,21 @@ using namespace std::string_literals;
   tSTRING             1128
   tSYMBOL             1129
   tNL                 1130
-  tEH                 1131
-  tCOLON              1132
-  tCOMMA              1133
+  tEH                 1131    "?"
+  tCOLON              1132    ":"
+  tCOMMA              1133    ","
   tSPACE              1134
-  tSEMI               1135
-  tLAMBDA             1136
+  tSEMI               1135    ";"
+  tLAMBDA             1136    "->"
   tLAMBEG             1137
   tCHARACTER          1138
   tRATIONAL           1139
   tIMAGINARY          1140
   tLABEL_END          1141
-  tANDDOT             1142
+  tANDDOT             1142    "&."
   tRATIONAL_IMAGINARY 1143
   tFLOAT_IMAGINARY    1144
+;
 
 %type <node>
   arg
@@ -208,9 +210,9 @@ using namespace std::string_literals;
   f_larglist
   f_marg
   f_opt
+  f_rest_marg
   fitem
   for_var
-  fsym
   keyword_variable
   lhs
   literal
@@ -228,6 +230,7 @@ using namespace std::string_literals;
   qsymbols
   qwords
   regexp
+  ssym
   simple_numeric
   singleton
   stmt
@@ -269,6 +272,7 @@ using namespace std::string_literals;
   f_marg_list
   f_margs
   f_optarg
+  f_no_kwarg
   f_rest_arg
   list_none
   mlhs_basic
@@ -390,7 +394,7 @@ union parser_value {
 %code {
 namespace ruby_parser {
 namespace bison {
-namespace typedruby25 {
+namespace typedruby27 {
 
 #define DIAGCHECK() do { \
 	if (driver.pending_error) { \
@@ -415,7 +419,7 @@ void parser::error(const std::string &msg) {
 		error_message);
 }
 
-int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
+int yylex(parser::semantic_type *lval, ruby_parser::typedruby27 &driver) {
 	auto token = driver.lex.advance();
 	driver.last_token = token;
 	int token_type = static_cast<int>(token->type());
@@ -586,6 +590,13 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                 | lhs tEQL mrhs
                     {
                       $$ = driver.build.assign(self, $1, $2, driver.build.array(self, nullptr, $3, nullptr));
+                    }
+                | mlhs tEQL mrhs_arg kRESCUE_MOD stmt
+                    {
+                    ruby_parser::node_list rescue_body(
+						driver.build.rescue_body(self, $4, nullptr, nullptr, nullptr, nullptr, $5));
+                      auto begin_body = driver.build.beginBody(self, $3, &rescue_body, nullptr, nullptr, nullptr, nullptr);
+                      $$ = driver.build.multi_assign(self, $1, begin_body);
                     }
                 | mlhs tEQL mrhs_arg
                     {
@@ -882,15 +893,15 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                     }
                 | primary_value call_op tIDENTIFIER
                     {
-                      $$ = driver.build.attrAsgn(self, $1, $2, $3);
+                      $$ = driver.build.attrAsgn(self, $1, $2, $3, true);
                     }
                 | primary_value tCOLON2 tIDENTIFIER
                     {
-                      $$ = driver.build.attrAsgn(self, $1, $2, $3);
+                      $$ = driver.build.attrAsgn(self, $1, $2, $3, false);
                     }
                 | primary_value call_op tCONSTANT
                     {
-                      $$ = driver.build.attrAsgn(self, $1, $2, $3);
+                      $$ = driver.build.attrAsgn(self, $1, $2, $3, true);
                     }
                 | primary_value tCOLON2 tCONSTANT
                     {
@@ -924,15 +935,15 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                     }
                 | primary_value call_op tIDENTIFIER
                     {
-                      $$ = driver.build.attrAsgn(self, $1, $2, $3);
+                      $$ = driver.build.attrAsgn(self, $1, $2, $3, false);
                     }
                 | primary_value tCOLON2 tIDENTIFIER
                     {
-                      $$ = driver.build.attrAsgn(self, $1, $2, $3);
+                      $$ = driver.build.attrAsgn(self, $1, $2, $3, false);
                     }
                 | primary_value call_op tCONSTANT
                     {
-                      $$ = driver.build.attrAsgn(self, $1, $2, $3);
+                      $$ = driver.build.attrAsgn(self, $1, $2, $3, false);
                     }
                 | primary_value tCOLON2 tCONSTANT
                     {
@@ -974,14 +985,11 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                 | op
                 | reswords
 
-            fsym: fname
+            fitem: fname
                     {
                       $$ = driver.build.symbol(self, $1);
                     }
                 | symbol
-
-           fitem: fsym
-                | dsym
 
       undef_list: fitem
                     {
@@ -1075,6 +1083,14 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                 | arg tDOT3
                     {
                       $$ = driver.build.range_exclusive(self, $1, $2, nullptr);
+                    }
+                | tDOT2 arg
+                    {
+                      $$ = driver.build.range_inclusive(self, nullptr, $1, $2);
+                    }
+                | tDOT3 arg
+                    {
+                      $$ = driver.build.range_exclusive(self, nullptr, $1, $2);
                     }
                 | arg tPLUS arg
                     {
@@ -1474,10 +1490,14 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                         delimited_block->end);
                       DIAGCHECK();
                     }
-                | tLAMBDA lambda
+                | tLAMBDA
+                    {
+                      driver.lex.context.push(Context::State::LAMBDA);
+                    }
+                    lambda
                     {
                       auto lambda_call = driver.build.callLambda(self, $1);
-                      auto &lambda = $2;
+                      auto &lambda = $3;
                       $$ = driver.build.block(self, lambda_call,
                         lambda->begin,
                         lambda->args,
@@ -1577,6 +1597,7 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                     {
                       driver.lex.extend_static();
                       driver.lex.cmdarg.push(false);
+                      driver.lex.context.push(Context::State::MODULE);
                     }
                     bodystmt kEND
                     {
@@ -1592,6 +1613,7 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
 
                       driver.lex.cmdarg.pop();
                       driver.lex.unextend();
+                      driver.lex.context.pop();
                     }
                 | kDEF fname
                     {
@@ -1599,6 +1621,7 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                       driver.lex.cmdarg.push(false);
                       driver.lex.cond.push(false);
                       driver.lex.context.push(Context::State::DEF);
+                      driver.current_arg_stack.push("");
                     }
                     f_arglist bodystmt kEND
                     {
@@ -1608,6 +1631,7 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                       driver.lex.cond.pop();
                       driver.lex.unextend();
                       driver.lex.context.pop();
+                      driver.current_arg_stack.pop();
                     }
                 | kDEF singleton dot_or_colon
                     {
@@ -1619,6 +1643,7 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                       driver.lex.cmdarg.push(false);
                       driver.lex.cond.push(false);
                       driver.lex.context.push(Context::State::DEFS);
+                      driver.current_arg_stack.push("");
                     }
                     f_arglist bodystmt kEND
                     {
@@ -1629,6 +1654,7 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                       driver.lex.cond.pop();
                       driver.lex.unextend();
                       driver.lex.context.pop();
+                      driver.current_arg_stack.pop();
                     }
                 | kBREAK
                     {
@@ -1713,51 +1739,37 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                     }
 
          f_margs: f_marg_list
-                | f_marg_list tCOMMA tSTAR f_norm_arg
+                | f_marg_list tCOMMA f_rest_marg
                     {
                       auto &list = $1;
-                      list->emplace_back(driver.build.restarg(self, $3, $4));
+                      list->emplace_back($3);
                       $$ = list;
                     }
-                | f_marg_list tCOMMA tSTAR f_norm_arg tCOMMA f_marg_list
-                    {
-                      auto &args = $1;
-                      args->emplace_back(driver.build.restarg(self, $3, $4));
-                      args->concat($6);
-                      $$ = args;
-                    }
-                | f_marg_list tCOMMA tSTAR
+                | f_marg_list tCOMMA f_rest_marg tCOMMA f_marg_list
                     {
                       auto &list = $1;
-                      list->emplace_back(driver.build.restarg(self, $3, nullptr));
+                      list->emplace_back($3);
+                      list->concat($5);
                       $$ = list;
                     }
-                | f_marg_list tCOMMA tSTAR            tCOMMA f_marg_list
+                |                    f_rest_marg
                     {
-                      auto &args = $1;
-                      args->emplace_back(driver.build.restarg(self, $3, nullptr));
-                      args->concat($5);
-                      $$ = args;
+                      $$ = driver.alloc.node_list($1);
                     }
-                |                    tSTAR f_norm_arg
+                |                    f_rest_marg tCOMMA f_marg_list
                     {
-                      $$ = driver.alloc.node_list(driver.build.restarg(self, $1, $2));
+                      auto &list = $3;
+                      list->push_front($1);
+                      $$ = list;
                     }
-                |                    tSTAR f_norm_arg tCOMMA f_marg_list
+
+     f_rest_marg: tSTAR f_norm_arg
                     {
-                      auto &args = $4;
-                      args->push_front(driver.build.restarg(self, $1, $2));
-                      $$ = args;
+                      $$ = driver.build.restarg(self, $1, $2);
                     }
-                |                    tSTAR
+                | tSTAR
                     {
-                      $$ = driver.alloc.node_list(driver.build.restarg(self, $1, nullptr));
-                    }
-                |                    tSTAR tCOMMA f_marg_list
-                    {
-                      auto &args = $3;
-                      args->push_front(driver.build.restarg(self, $1, nullptr));
-                      $$ = args;
+                      $$ = driver.build.restarg(self, $1, nullptr);
                     }
 
  block_args_tail: f_block_kwarg tCOMMA f_kwrest opt_f_block_arg
@@ -1774,6 +1786,12 @@ int yylex(parser::semantic_type *lval, ruby_parser::typedruby25 &driver) {
                       $$ = args;
                     }
                 | f_kwrest opt_f_block_arg
+                    {
+                      auto &args = $1;
+                      args->concat($2);
+                      $$ = args;
+                    }
+                | f_no_kwarg opt_f_block_arg
                     {
                       auto &args = $1;
                       args->concat($2);
@@ -1909,18 +1927,17 @@ opt_block_args_tail:
 
  block_param_def: tPIPE opt_bv_decl tPIPE
                     {
+                      driver.numparam_stack.set_ordinary_params();
                       $$ = driver.build.args(self, $1, $2, $3, true);
-                      DIAGCHECK();
-                    }
-                | tOROP
-                    {
-                      $$ = driver.build.args(self, $1, nullptr, $1, true);
+                      driver.current_arg_stack.set("");
                       DIAGCHECK();
                     }
                 | tPIPE block_param opt_bv_decl tPIPE
                     {
+                      driver.numparam_stack.set_ordinary_params();
                       auto &params = $2;
                       params->concat($3);
+                      driver.current_arg_stack.set("");
                       $$ = driver.build.args(self, $1, params, $4, true);
                       DIAGCHECK();
                     }
@@ -1958,24 +1975,31 @@ opt_block_args_tail:
 
           lambda:   {
                       driver.lex.extend_dynamic();
+                      driver.numparam_stack.push(driver.alloc.node_list());
                     }
                   f_larglist
                     {
+                      driver.lex.context.pop();
                       driver.lex.cmdarg.push(false);
                     }
                   lambda_body
                     {
                       driver.lex.cmdarg.pop();
-
                       auto &delimited_block = $4;
-                      delimited_block->args = $2;
+                      if (driver.numparam_stack.seen_numparams()) {
+                        delimited_block->args = driver.build.numparams(self, driver.numparam_stack.top()->decls);
+                      } else {
+                        delimited_block->args = $2;
+                      }
                       $$ = delimited_block;
 
+                      driver.numparam_stack.pop();
                       driver.lex.unextend();
                     }
 
      f_larglist: tLPAREN2 f_args opt_bv_decl tRPAREN
                     {
+                      driver.numparam_stack.set_ordinary_params();
                       auto &args = $2;
                       args->concat($3);
                       $$ = driver.build.args(self, $1, args, $4, true);
@@ -1983,6 +2007,9 @@ opt_block_args_tail:
                     }
                 | f_args
                     {
+                      if ($1->size() > 0) {
+                        driver.numparam_stack.set_ordinary_params();
+                      }
                       $$ = driver.build.args(self, nullptr, $1, nullptr, true);
                       DIAGCHECK();
                     }
@@ -2149,25 +2176,38 @@ opt_block_args_tail:
 
       brace_body:   {
                       driver.lex.extend_dynamic();
+                      driver.numparam_stack.push(driver.alloc.node_list());
                     }
                     opt_block_param bodystmt
                     {
-                      $$ = driver.alloc.delimited_block(nullptr, $2, $3, nullptr);
-
+                      if (driver.numparam_stack.seen_numparams()) {
+                        auto numparams = driver.build.numparams(self, driver.numparam_stack.top()->decls);
+                        $$ = driver.alloc.delimited_block(nullptr, numparams, $3, nullptr);
+                      } else {
+                        $$ = driver.alloc.delimited_block(nullptr, $2, $3, nullptr);
+                      }
+                      driver.numparam_stack.pop();
                       driver.lex.unextend();
                     }
 
          do_body:   {
                       driver.lex.extend_dynamic();
+                      driver.numparam_stack.push(driver.alloc.node_list());
                     }
                     {
                       driver.lex.cmdarg.push(false);
                     }
                     opt_block_param bodystmt
                     {
-                      $$ = driver.alloc.delimited_block(nullptr, $3, $4, nullptr);
+                      if (driver.numparam_stack.seen_numparams()) {
+                        auto numparams = driver.build.numparams(self, driver.numparam_stack.top()->decls);
+                        $$ = driver.alloc.delimited_block(nullptr, numparams, $4, nullptr);
+                      } else {
+                        $$ = driver.alloc.delimited_block(nullptr, $3, $4, nullptr);
+                      }
                       driver.lex.unextend();
 
+                      driver.numparam_stack.pop();
                       driver.lex.cmdarg.pop();
                     }
 
@@ -2233,7 +2273,6 @@ opt_block_args_tail:
 
          literal: numeric
                 | symbol
-                | dsym
 
          strings: string
                     {
@@ -2422,13 +2461,16 @@ regexp_contents: // nothing
                 | backref
 
 
-          symbol: tSYMBOL
+          symbol: ssym
+                | dsym
+
+            ssym: tSYMBOL
                     {
                       driver.lex.set_state_expr_end();
                       $$ = driver.build.symbol(self, $1);
                     }
 
-            dsym: tSYMBEG xstring_contents tSTRING_END
+            dsym: tSYMBEG string_contents tSTRING_END
                     {
                       driver.lex.set_state_expr_end();
                       $$ = driver.build.symbol_compose(self, $1, $2, $3);
@@ -2601,6 +2643,12 @@ keyword_variable: kNIL
                       args->concat($2);
                       $$ = args;
                     }
+                | f_no_kwarg opt_f_block_arg
+                    {
+                      auto &args = $1;
+                      args->concat($2);
+                      $$ = args;
+                    }
                 | f_block_arg
                     {
                       $$ = $1;
@@ -2745,16 +2793,19 @@ keyword_variable: kNIL
                     {
                       auto ident = $1;
                       driver.lex.declare(ident->string());
+                      driver.numparam_stack.set_ordinary_params();
                       $$ = ident;
                     }
 
       f_arg_asgn: f_norm_arg
                     {
+                      driver.current_arg_stack.set($1[0].string());
                       $$ = $1;
                     }
 
       f_arg_item: f_arg_asgn
                     {
+                      driver.current_arg_stack.set("0");
                       $$ = driver.build.arg(self, $1);
                     }
                 | tLPAREN f_margs rparen
@@ -2781,15 +2832,19 @@ keyword_variable: kNIL
                         YYERROR;
                       }
                       driver.lex.declare(label->string());
+                      driver.current_arg_stack.set($1[0].string());
+                      driver.numparam_stack.set_ordinary_params();
                       $$ = label;
                     }
 
             f_kw: f_label arg_value
                     {
+                      driver.current_arg_stack.set("");
                       $$ = driver.build.kwoptarg(self, $1, $2);
                     }
                 | f_label
                     {
+                      driver.current_arg_stack.set("");
                       $$ = driver.build.kwarg(self, $1);
                     }
 
@@ -2826,6 +2881,11 @@ keyword_variable: kNIL
 
      kwrest_mark: tPOW | tDSTAR
 
+      f_no_kwarg: kwrest_mark kNIL
+                    {
+                      $$ = driver.alloc.node_list(driver.build.kwnilarg(self, $1, $2));
+                    }
+
         f_kwrest: kwrest_mark tIDENTIFIER
                     {
                       auto ident = $2;
@@ -2845,11 +2905,13 @@ keyword_variable: kNIL
 
            f_opt: f_arg_asgn tEQL arg_value
                     {
+                      driver.current_arg_stack.set("0");
                       $$ = driver.build.optarg(self, $1, $2, $3);
                     }
 
      f_block_opt: f_arg_asgn tEQL primary_value
                     {
+                      driver.current_arg_stack.set("0");
                       $$ = driver.build.optarg(self, $1, $2, $3);
                     }
 

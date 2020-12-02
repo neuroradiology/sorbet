@@ -52,7 +52,20 @@ main/sorbet --silence-dev-message --stop-after=namer \
   --autogen-autoloader-modules=Foo \
   --autogen-autoloader-root my-autoloader/ \
   --autogen-autoloader-strip-prefix test/cli/ \
+  --autogen-registry-module "Primus::Require" \
   test/cli/autogen-autoloader/inplace.rb
 
 cat strip-output/root.rb
 cat strip-output/Foo.rb
+
+echo
+echo "--- with different root object"
+rm -rf root-object
+mkdir -p root-object
+main/sorbet --silence-dev-message --stop-after=namer -p autogen-autoloader:root-object \
+  --autogen-autoloader-modules=Foo \
+  --autogen-root-object=MyRootObject \
+  test/cli/autogen-autoloader/inplace.rb 2>&1
+
+cat root-object/root.rb
+cat root-object/Foo.rb

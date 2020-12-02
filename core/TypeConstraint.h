@@ -17,11 +17,13 @@ class TypeConstraint {
     TypePtr &findLowerBound(SymbolRef forWhat);
     TypePtr &findSolution(SymbolRef forWhat);
 
+    UnorderedMap<SymbolRef, std::pair<TypePtr, TypePtr>> collateBounds(const GlobalState &gs) const;
+
 public:
     TypeConstraint() = default;
     TypeConstraint(const TypeConstraint &) = delete;
     TypeConstraint(TypeConstraint &&) = default;
-    void defineDomain(Context ctx, const InlinedVector<SymbolRef, 4> &typeParams);
+    void defineDomain(const GlobalState &gs, const InlinedVector<SymbolRef, 4> &typeParams);
     bool hasUpperBound(SymbolRef forWhat) const;
     bool hasLowerBound(SymbolRef forWhat) const;
     TypePtr findSolution(SymbolRef forWhat) const;
@@ -34,17 +36,19 @@ public:
     }
 
     // At least one of arguments has to be a typevar
-    bool rememberIsSubtype(Context ctx, const TypePtr &, const TypePtr &);
+    bool rememberIsSubtype(const GlobalState &gs, const TypePtr &, const TypePtr &);
 
     // At least one of arguments has to be a typevar
-    bool isAlreadyASubType(Context ctx, const TypePtr &, const TypePtr &) const;
+    bool isAlreadyASubType(const GlobalState &gs, const TypePtr &, const TypePtr &) const;
     // returns true if was successfully solved
-    bool solve(Context ctx);
+    bool solve(const GlobalState &gs);
     TypePtr getInstantiation(SymbolRef) const;
     std::unique_ptr<TypeConstraint> deepCopy() const;
     InlinedVector<SymbolRef, 4> getDomain() const;
     static TypeConstraint EmptyFrozenConstraint;
     std::string toString(const core::GlobalState &gs) const;
+
+    std::vector<ErrorLine> toExplanation(const core::GlobalState &gs) const;
 };
 
 } // namespace sorbet::core

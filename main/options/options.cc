@@ -13,9 +13,9 @@
 #include "main/options/ConfigParser.h"
 #include "main/options/options.h"
 #include "options.h"
+#include "sorbet_version/sorbet_version.h"
 #include "sys/stat.h"
 #include "third_party/licenses/licenses.h"
-#include "version/version.h"
 
 namespace spd = spdlog;
 using namespace std;
@@ -31,6 +31,7 @@ struct PrintOptions {
 const vector<PrintOptions> print_options({
     {"parse-tree", &Printers::ParseTree},
     {"parse-tree-json", &Printers::ParseTreeJson},
+    {"parse-tree-json-with-locs", &Printers::ParseTreeJsonWithLocs},
     {"parse-tree-whitequark", &Printers::ParseTreeWhitequark},
     {"desugar-tree", &Printers::DesugarTree},
     {"desugar-tree-raw", &Printers::DesugarTreeRaw},
@@ -51,10 +52,16 @@ const vector<PrintOptions> print_options({
     {"symbol-table", &Printers::SymbolTable, true},
     {"symbol-table-raw", &Printers::SymbolTableRaw, true},
     {"symbol-table-json", &Printers::SymbolTableJson, true},
+    {"symbol-table-proto", &Printers::SymbolTableProto, true},
+    {"symbol-table-messagepack", &Printers::SymbolTableMessagePack, true, false},
     {"symbol-table-full", &Printers::SymbolTableFull, true},
     {"symbol-table-full-raw", &Printers::SymbolTableFullRaw, true},
     {"symbol-table-full-json", &Printers::SymbolTableFullJson, true},
+    {"symbol-table-full-proto", &Printers::SymbolTableFullProto, true},
+    {"symbol-table-full-messagepack", &Printers::SymbolTableFullMessagePack, true, false},
     {"file-table-json", &Printers::FileTableJson, true},
+    {"file-table-proto", &Printers::FileTableProto, true},
+    {"file-table-messagepack", &Printers::FileTableMessagePack, true, false},
     {"missing-constants", &Printers::MissingConstants, true},
     {"plugin-generated-code", &Printers::PluginGeneratedCode, true},
     {"autogen", &Printers::Autogen, true},
@@ -62,6 +69,7 @@ const vector<PrintOptions> print_options({
     {"autogen-classlist", &Printers::AutogenClasslist, true},
     {"autogen-autoloader", &Printers::AutogenAutoloader, true, false},
     {"autogen-subclasses", &Printers::AutogenSubclasses, true},
+    {"package-tree", &Printers::Packager},
 });
 
 PrinterConfig::PrinterConfig() : state(make_shared<GuardedState>()){};
@@ -88,6 +96,7 @@ vector<reference_wrapper<PrinterConfig>> Printers::printers() {
     return vector<reference_wrapper<PrinterConfig>>({
         ParseTree,
         ParseTreeJson,
+        ParseTreeJsonWithLocs,
         ParseTreeWhitequark,
         DesugarTree,
         DesugarTreeRaw,
@@ -107,10 +116,17 @@ vector<reference_wrapper<PrinterConfig>> Printers::printers() {
         CFGRaw,
         SymbolTable,
         SymbolTableRaw,
+        SymbolTableProto,
+        SymbolTableMessagePack,
         SymbolTableJson,
         SymbolTableFull,
+        SymbolTableFullProto,
+        SymbolTableFullMessagePack,
+        SymbolTableFullJson,
         SymbolTableFullRaw,
         FileTableJson,
+        FileTableProto,
+        FileTableMessagePack,
         MissingConstants,
         PluginGeneratedCode,
         Autogen,
@@ -118,6 +134,7 @@ vector<reference_wrapper<PrinterConfig>> Printers::printers() {
         AutogenClasslist,
         AutogenAutoloader,
         AutogenSubclasses,
+        Packager,
     });
 }
 
@@ -314,18 +331,31 @@ buildOptions(const vector<pipeline::semantic_extension::SemanticExtensionProvide
                                     cxxopts::value<string>()->default_value(empty.webTraceFile), "file");
     options.add_options("advanced")("debug-log-file", "Path to debug log file",
                                     cxxopts::value<string>()->default_value(empty.debugLogFile), "file");
-    options.add_options("advanced")("reserve-mem-kb",
-                                    "Preallocate the specified amount of memory for symbol+name tables",
-                                    cxxopts::value<u8>()->default_value(fmt::format("{}", empty.reserveMemKiB)));
+    options.add_options("advanced")(
+        "reserve-class-table-capacity", "Preallocate the specified number of entries in the class and modules table",
+        cxxopts::value<u4>()->default_value(fmt::format("{}", empty.reserveClassTableCapacity)));
+    options.add_options("advanced")(
+        "reserve-method-table-capacity", "Preallocate the specified number of entries in the method table",
+        cxxopts::value<u4>()->default_value(fmt::format("{}", empty.reserveMethodTableCapacity)));
+    options.add_options("advanced")(
+        "reserve-field-table-capacity", "Preallocate the specified number of entries in the field table",
+        cxxopts::value<u4>()->default_value(fmt::format("{}", empty.reserveFieldTableCapacity)));
+    options.add_options("advanced")(
+        "reserve-type-argument-table-capacity",
+        "Preallocate the specified number of entries in the type argument table",
+        cxxopts::value<u4>()->default_value(fmt::format("{}", empty.reserveTypeArgumentTableCapacity)));
+    options.add_options("advanced")(
+        "reserve-type-member-table-capacity", "Preallocate the specified number of entries in the type member table",
+        cxxopts::value<u4>()->default_value(fmt::format("{}", empty.reserveTypeMemberTableCapacity)));
+    options.add_options("advanced")(
+        "reserve-name-table-capacity", "Preallocate the specified number of entries in the name table",
+        cxxopts::value<u4>()->default_value(fmt::format("{}", empty.reserveNameTableCapacity)));
     options.add_options("advanced")("stdout-hup-hack", "Monitor STDERR for HUP and exit on hangup");
     options.add_options("advanced")("remove-path-prefix",
                                     "Remove the provided path prefix from all printed paths. Defaults to the input "
                                     "directory passed to Sorbet, if any.",
                                     cxxopts::value<string>()->default_value(empty.pathPrefix), "prefix");
     options.add_options("advanced")("a,autocorrect", "Auto-correct source files with suggested fixes");
-    options.add_options("advanced")(
-        "suggest-runtime-profiled",
-        "When suggesting signatures in `typed: strict` mode, suggest `::T::Utils::RuntimeProfiled`");
     options.add_options("advanced")("P,progress", "Draw progressbar");
     options.add_options("advanced")("license", "Show license");
     options.add_options("advanced")("color", "Use color output", cxxopts::value<string>()->default_value("auto"),
@@ -339,11 +369,14 @@ buildOptions(const vector<pipeline::semantic_extension::SemanticExtensionProvide
                                     cxxopts::value<string>()->default_value(empty.watchmanPath));
     options.add_options("advanced")("enable-experimental-lsp-document-symbol",
                                     "Enable experimental LSP feature: Document Symbol");
+    options.add_options("advanced")("enable-experimental-lsp-document-formatting-rubyfmt",
+                                    "Enable experimental LSP feature: Document Formatting with Rubyfmt");
     options.add_options("advanced")("enable-experimental-lsp-document-highlight",
                                     "Enable experimental LSP feature: Document Highlight");
     options.add_options("advanced")("enable-experimental-lsp-signature-help",
                                     "Enable experimental LSP feature: Signature Help");
-    options.add_options("advanced")("enable-experimental-lsp-quick-fix", "Enable experimental LSP feature: Quick Fix");
+    options.add_options("advanced")("enable-experimental-lsp-rename", "Enable experimental LSP feature: Rename");
+
     options.add_options("advanced")(
         "enable-all-experimental-lsp-features",
         "Enable every experimental LSP feature. (WARNING: can be crashy; for developer use only. "
@@ -365,6 +398,8 @@ buildOptions(const vector<pipeline::semantic_extension::SemanticExtensionProvide
     options.add_options("advanced")("no-error-count", "Do not print the error count summary line");
     options.add_options("advanced")("autogen-version", "Autogen version to output", cxxopts::value<int>());
     options.add_options("advanced")("stripe-mode", "Enable Stripe specific error enforcement", cxxopts::value<bool>());
+    options.add_options("advanced")("stripe-packages", "Enable support for Stripe's internal Ruby package system",
+                                    cxxopts::value<bool>());
 
     options.add_options("advanced")(
         "autogen-autoloader-exclude-require",
@@ -379,6 +414,11 @@ buildOptions(const vector<pipeline::semantic_extension::SemanticExtensionProvide
                                     cxxopts::value<string>()->default_value(""));
     options.add_options("advanced")("autogen-autoloader-root", "Root directory for autoloader output",
                                     cxxopts::value<string>()->default_value("autoloader"));
+    options.add_options("advanced")("autogen-registry-module", "Name of Ruby module used for autoloader registry",
+                                    cxxopts::value<string>()->default_value("Opus::Require"));
+    options.add_options("advanced")("autogen-root-object",
+                                    "Name of Ruby object on which root autoloads should be installed",
+                                    cxxopts::value<string>()->default_value("Object"));
     options.add_options("advanced")("autogen-autoloader-samefile",
                                     "Modules that should never be collapsed into their parent. This helps break cycles "
                                     "in certain cases. (e.g. Foo::Bar::Baz)",
@@ -387,11 +427,16 @@ buildOptions(const vector<pipeline::semantic_extension::SemanticExtensionProvide
                                     "Prefixes to strip from file output paths. "
                                     "If path does not start with prefix, nothing is stripped",
                                     cxxopts::value<vector<string>>());
+    options.add_options("advanced")("autogen-autoloader-packaged", "Generate the packaged autoloader files",
+                                    cxxopts::value<bool>());
 
     options.add_options("advanced")("error-url-base",
                                     "Error URL base string. If set, error URLs are generated by prefixing the "
                                     "error code with this string.",
                                     cxxopts::value<string>()->default_value(empty.errorUrlBase), "url-base");
+    options.add_options("advanced")("ruby3-keyword-args", "Enforce use of new (Ruby 3.0-style) keyword arguments",
+                                    cxxopts::value<bool>());
+
     // Developer options
     options.add_options("dev")("p,print", to_string(all_prints), cxxopts::value<vector<string>>(), "type");
     options.add_options("dev")("autogen-subclasses-parent",
@@ -464,6 +509,8 @@ buildOptions(const vector<pipeline::semantic_extension::SemanticExtensionProvide
                                cxxopts::value<string>()->default_value(empty.metricsSha), "sha1");
     options.add_options("dev")("metrics-repo", "Repo to report in metrics export",
                                cxxopts::value<string>()->default_value(empty.metricsRepo), "repo");
+    options.add_options("dev")("metrics-extra-tags", "Extra tags to report, comma separated",
+                               cxxopts::value<string>()->default_value(""), "key1=value1,key2=value2");
 
     for (auto &provider : semanticExtensionProviders) {
         provider->injectOptions(options);
@@ -587,7 +634,10 @@ bool extractAutoloaderConfig(cxxopts::ParseResult &raw, Options &opts, shared_pt
         }
     }
     cfg.preamble = raw["autogen-autoloader-preamble"].as<string>();
+    cfg.registryModule = raw["autogen-registry-module"].as<string>();
     cfg.rootDir = stripTrailingSlashes(raw["autogen-autoloader-root"].as<string>());
+    cfg.packagedAutoloader = raw["autogen-autoloader-packaged"].as<bool>();
+    cfg.rootObject = raw["autogen-root-object"].as<string>();
     return true;
 }
 
@@ -676,12 +726,14 @@ void readOptions(Options &opts,
 
         bool enableAllLSPFeatures = raw["enable-all-experimental-lsp-features"].as<bool>();
         opts.lspAllBetaFeaturesEnabled = enableAllLSPFeatures || raw["enable-all-beta-lsp-features"].as<bool>();
-        opts.lspQuickFixEnabled = opts.lspAllBetaFeaturesEnabled || raw["enable-experimental-lsp-quick-fix"].as<bool>();
         opts.lspDocumentSymbolEnabled =
             enableAllLSPFeatures || raw["enable-experimental-lsp-document-symbol"].as<bool>();
         opts.lspDocumentHighlightEnabled =
             enableAllLSPFeatures || raw["enable-experimental-lsp-document-highlight"].as<bool>();
         opts.lspSignatureHelpEnabled = enableAllLSPFeatures || raw["enable-experimental-lsp-signature-help"].as<bool>();
+        opts.lspDocumentFormatRubyfmtEnabled =
+            enableAllLSPFeatures || raw["enable-experimental-lsp-document-formatting-rubyfmt"].as<bool>();
+        opts.lspRenameEnabled = enableAllLSPFeatures || raw["enable-experimental-lsp-rename"].as<bool>();
 
         if (raw.count("lsp-directories-missing-from-client") > 0) {
             auto lspDirsMissingFromClient = raw["lsp-directories-missing-from-client"].as<vector<string>>();
@@ -714,10 +766,6 @@ void readOptions(Options &opts,
         }
 
         opts.runLSP = raw["lsp"].as<bool>();
-        if (opts.runLSP && !opts.cacheDir.empty()) {
-            logger->error("lsp mode does not yet support caching.");
-            throw EarlyReturnWithCode(1);
-        }
         opts.disableWatchman = raw["disable-watchman"].as<bool>();
         opts.watchmanPath = raw["watchman-path"].as<string>();
         // Certain features only need certain passes
@@ -764,10 +812,6 @@ void readOptions(Options &opts,
             logger->info("{}", options.help(options.groups()));
             throw EarlyReturnWithCode(0);
         }
-        if (raw["version"].as<bool>()) {
-            fmt::print("Sorbet typechecker {}\n", Version::full_version_string);
-            throw EarlyReturnWithCode(0);
-        }
         if (raw["license"].as<bool>()) {
             fmt::print(
                 "Sorbet typechecker is licensed under Apache License Version 2.0.\n\nSorbet is built on top of:\n{}",
@@ -794,7 +838,6 @@ void readOptions(Options &opts,
         opts.waitForDebugger = raw["wait-for-dbg"].as<bool>();
         opts.stressIncrementalResolver = raw["stress-incremental-resolver"].as<bool>();
         opts.sleepInSlowPath = raw["sleep-in-slow-path"].as<bool>();
-        opts.suggestRuntimeProfiledType = raw["suggest-runtime-profiled"].as<bool>();
         opts.enableCounters = raw["counters"].as<bool>();
         opts.silenceDevMessage = raw["silence-dev-message"].as<bool>();
         opts.censorForSnapshotTests = raw["censor-for-snapshot-tests"].as<bool>();
@@ -808,7 +851,21 @@ void readOptions(Options &opts,
         opts.metricsPrefix = raw["metrics-prefix"].as<string>();
         opts.debugLogFile = raw["debug-log-file"].as<string>();
         opts.webTraceFile = raw["web-trace-file"].as<string>();
-        opts.reserveMemKiB = raw["reserve-mem-kb"].as<u8>();
+        {
+            // parse extra sfx/datadog tags
+            auto stringToParse = raw["metrics-extra-tags"].as<string>();
+            if (stringToParse != "") {
+                for (absl::string_view sp : absl::StrSplit(stringToParse, ',')) {
+                    opts.metricsExtraTags.insert(absl::StrSplit(sp, absl::MaxSplits('=', 1)));
+                }
+            }
+        }
+        opts.reserveNameTableCapacity = raw["reserve-name-table-capacity"].as<u4>();
+        opts.reserveClassTableCapacity = raw["reserve-class-table-capacity"].as<u4>();
+        opts.reserveMethodTableCapacity = raw["reserve-method-table-capacity"].as<u4>();
+        opts.reserveFieldTableCapacity = raw["reserve-field-table-capacity"].as<u4>();
+        opts.reserveTypeArgumentTableCapacity = raw["reserve-type-argument-table-capacity"].as<u4>();
+        opts.reserveTypeMemberTableCapacity = raw["reserve-type-member-table-capacity"].as<u4>();
         if (raw.count("autogen-version") > 0) {
             if (!opts.print.AutogenMsgPack.enabled) {
                 logger->error("`{}` must also include `{}`", "--autogen-version", "-p autogen-msgpack");
@@ -817,8 +874,10 @@ void readOptions(Options &opts,
             opts.autogenVersion = raw["autogen-version"].as<int>();
         }
         opts.stripeMode = raw["stripe-mode"].as<bool>();
+        opts.stripePackages = raw["stripe-packages"].as<bool>();
         extractAutoloaderConfig(raw, opts, logger);
         opts.errorUrlBase = raw["error-url-base"].as<string>();
+        opts.ruby3KeywordArgs = raw["ruby3-keyword-args"].as<bool>();
         if (raw.count("error-white-list") > 0) {
             auto rawList = raw["error-white-list"].as<vector<int>>();
             opts.errorCodeWhiteList = set<int>(rawList.begin(), rawList.end());
@@ -835,7 +894,8 @@ void readOptions(Options &opts,
             opts.suggestSig = raw["suggest-sig"].as<bool>();
         }
 
-        if (raw.count("e") == 0 && opts.inputFileNames.empty() && !opts.runLSP && opts.storeState.empty()) {
+        if (raw.count("e") == 0 && opts.inputFileNames.empty() && !raw["version"].as<bool>() && !opts.runLSP &&
+            opts.storeState.empty()) {
             logger->error("You must pass either `{}` or at least one folder or ruby file.\n\n{}", "-e",
                           options.help({""}));
             throw EarlyReturnWithCode(1);
@@ -890,13 +950,16 @@ void readOptions(Options &opts,
                 configuredExtensions.emplace_back(move(maybeExtension));
             }
         }
+
+        // Allow semanticExtensionProviders to print something when --version is given before we throw.
+        if (raw["version"].as<bool>()) {
+            fmt::print("Sorbet typechecker {}\n", sorbet_full_version_string);
+            throw EarlyReturnWithCode(0);
+        }
     } catch (cxxopts::OptionParseException &e) {
         logger->info("{}. To see all available options pass `--help`.", e.what());
         throw EarlyReturnWithCode(1);
     }
 }
-
-EarlyReturnWithCode::EarlyReturnWithCode(int returnCode)
-    : SorbetException("early return with code " + to_string(returnCode)), returnCode(returnCode){};
 
 } // namespace sorbet::realmain::options

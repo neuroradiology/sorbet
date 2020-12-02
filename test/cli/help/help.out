@@ -6,7 +6,7 @@ Typechecker for Ruby
 Usage:
   sorbet [OPTION...] <path 1> <path 2> ...
 
-  -e, string     Parse an inline ruby string (default: )
+  -e, string     Parse an inline ruby string (default: "")
   -q, --quiet    Silence all non-critical errors
   -v, --verbose  Verbosity level [0-3]
   -h,            Show short help
@@ -22,7 +22,7 @@ Typechecker for Ruby
 Usage:
   sorbet [OPTION...] <path 1> <path 2> ...
 
-  -e, string     Parse an inline ruby string (default: )
+  -e, string     Parse an inline ruby string (default: "")
   -q, --quiet    Silence all non-critical errors
   -v, --verbose  Verbosity level [0-3]
   -h,            Show short help
@@ -36,7 +36,7 @@ Typechecker for Ruby
 Usage:
   sorbet [OPTION...] <path 1> <path 2> ...
 
-  -e, string     Parse an inline ruby string (default: )
+  -e, string     Parse an inline ruby string (default: "")
   -q, --quiet    Silence all non-critical errors
   -v, --verbose  Verbosity level [0-3]
   -h,            Show short help
@@ -50,20 +50,33 @@ Usage:
       --configatron-dir path    Path to configatron yaml folders
       --configatron-file path   Path to configatron yaml files
       --web-trace-file file     Web trace file. For use with chrome
-                                about://tracing (default: )
-      --debug-log-file file     Path to debug log file (default: )
-      --reserve-mem-kb arg      Preallocate the specified amount of memory
-                                for symbol+name tables (default: 0)
+                                about://tracing (default: "")
+      --debug-log-file file     Path to debug log file (default: "")
+      --reserve-class-table-capacity arg
+                                Preallocate the specified number of entries
+                                in the class and modules table (default: 0)
+      --reserve-method-table-capacity arg
+                                Preallocate the specified number of entries
+                                in the method table (default: 0)
+      --reserve-field-table-capacity arg
+                                Preallocate the specified number of entries
+                                in the field table (default: 0)
+      --reserve-type-argument-table-capacity arg
+                                Preallocate the specified number of entries
+                                in the type argument table (default: 0)
+      --reserve-type-member-table-capacity arg
+                                Preallocate the specified number of entries
+                                in the type member table (default: 0)
+      --reserve-name-table-capacity arg
+                                Preallocate the specified number of entries
+                                in the name table (default: 0)
       --stdout-hup-hack         Monitor STDERR for HUP and exit on hangup
       --remove-path-prefix prefix
                                 Remove the provided path prefix from all
                                 printed paths. Defaults to the input directory
-                                passed to Sorbet, if any. (default: )
+                                passed to Sorbet, if any. (default: "")
   -a, --autocorrect             Auto-correct source files with suggested
                                 fixes
-      --suggest-runtime-profiled
-                                When suggesting signatures in `typed: strict`
-                                mode, suggest `::T::Utils::RuntimeProfiled`
   -P, --progress                Draw progressbar
       --license                 Show license
       --color {always,never,[auto]}
@@ -78,14 +91,17 @@ Usage:
       --enable-experimental-lsp-document-symbol
                                 Enable experimental LSP feature: Document
                                 Symbol
+      --enable-experimental-lsp-document-formatting-rubyfmt
+                                Enable experimental LSP feature: Document
+                                Formatting with Rubyfmt
       --enable-experimental-lsp-document-highlight
                                 Enable experimental LSP feature: Document
                                 Highlight
       --enable-experimental-lsp-signature-help
                                 Enable experimental LSP feature: Signature
                                 Help
-      --enable-experimental-lsp-quick-fix
-                                Enable experimental LSP feature: Quick Fix
+      --enable-experimental-lsp-rename
+                                Enable experimental LSP feature: Rename
       --enable-all-experimental-lsp-features
                                 Enable every experimental LSP feature.
                                 (WARNING: can be crashy; for developer use only. End
@@ -110,6 +126,8 @@ Usage:
       --no-error-count          Do not print the error count summary line
       --autogen-version arg     Autogen version to output
       --stripe-mode             Enable Stripe specific error enforcement
+      --stripe-packages         Enable support for Stripe's internal Ruby
+                                package system
       --autogen-autoloader-exclude-require arg
                                 Names that should be excluded from top-level
                                 require statements in autoloader output. (e.g.
@@ -122,10 +140,16 @@ Usage:
                                 output
       --autogen-autoloader-preamble arg
                                 Preamble to add to each autoloader file
-                                (default: )
+                                (default: "")
       --autogen-autoloader-root arg
                                 Root directory for autoloader output
                                 (default: autoloader)
+      --autogen-registry-module arg
+                                Name of Ruby module used for autoloader
+                                registry (default: Opus::Require)
+      --autogen-root-object arg
+                                Name of Ruby object on which root autoloads
+                                should be installed (default: Object)
       --autogen-autoloader-samefile arg
                                 Modules that should never be collapsed into
                                 their parent. This helps break cycles in
@@ -134,24 +158,32 @@ Usage:
                                 Prefixes to strip from file output paths. If
                                 path does not start with prefix, nothing is
                                 stripped
+      --autogen-autoloader-packaged
+                                Generate the packaged autoloader files
       --error-url-base url-base
                                 Error URL base string. If set, error URLs are
                                 generated by prefixing the error code with
                                 this string. (default: https://srb.help/)
+      --ruby3-keyword-args      Enforce use of new (Ruby 3.0-style) keyword
+                                arguments
 
  dev options:
   -p, --print type              Print: [parse-tree, parse-tree-json,
-                                parse-tree-whitequark, desugar-tree, desugar-tree-raw,
-                                rewrite-tree, rewrite-tree-raw, index-tree,
-                                index-tree-raw, name-tree, name-tree-raw,
-                                resolve-tree, resolve-tree-raw, flatten-tree,
-                                flatten-tree-raw, ast, ast-raw, cfg, cfg-raw,
-                                symbol-table, symbol-table-raw, symbol-table-json,
-                                symbol-table-full, symbol-table-full-raw,
-                                symbol-table-full-json, file-table-json,
-                                missing-constants, plugin-generated-code, autogen,
-                                autogen-msgpack, autogen-classlist,
-                                autogen-autoloader, autogen-subclasses]
+                                parse-tree-json-with-locs, parse-tree-whitequark,
+                                desugar-tree, desugar-tree-raw, rewrite-tree,
+                                rewrite-tree-raw, index-tree, index-tree-raw,
+                                name-tree, name-tree-raw, resolve-tree,
+                                resolve-tree-raw, flatten-tree, flatten-tree-raw, ast,
+                                ast-raw, cfg, cfg-raw, symbol-table,
+                                symbol-table-raw, symbol-table-json, symbol-table-proto,
+                                symbol-table-messagepack, symbol-table-full,
+                                symbol-table-full-raw, symbol-table-full-json,
+                                symbol-table-full-proto,
+                                symbol-table-full-messagepack, file-table-json, file-table-proto,
+                                file-table-messagepack, missing-constants,
+                                plugin-generated-code, autogen, autogen-msgpack,
+                                autogen-classlist, autogen-autoloader,
+                                autogen-subclasses, package-tree]
       --autogen-subclasses-parent string
                                 Parent classes for which generate a list of
                                 subclasses. This option must be used in
@@ -189,21 +221,21 @@ Usage:
                                 (default: auto)
       --typed-override filepath.yaml
                                 Yaml config that overrides strictness levels
-                                on files (default: )
-      --store-state file        Store state into file (default: )
+                                on files (default: "")
+      --store-state file        Store state into file (default: "")
       --cache-dir dir           Use the specified folder to cache data
-                                (default: )
+                                (default: "")
       --suppress-non-critical   Exit 0 unless there was a critical error
       --dsl-plugins filepath.yaml
                                 YAML config that configures external DSL
-                                plugins (default: )
+                                plugins (default: "")
       --counter counter         Print internal counter
-      --statsd-host host        StatsD sever hostname (default: )
+      --statsd-host host        StatsD sever hostname (default: "")
       --counters                Print all internal counters
       --suggest-typed           Suggest which typed: sigils to add or upgrade
       --statsd-prefix prefix    StatsD prefix (default: ruby_typer.unknown)
       --statsd-port port        StatsD server port (default: 8200)
-      --metrics-file file       File to export metrics to (default: )
+      --metrics-file file       File to export metrics to (default: "")
       --metrics-prefix file     Prefix to use in metrics (default:
                                 ruby_typer.unknown.)
       --metrics-branch branch   Branch to report in metrics export (default:
@@ -212,5 +244,8 @@ Usage:
                                 none)
       --metrics-repo repo       Repo to report in metrics export (default:
                                 none)
+      --metrics-extra-tags key1=value1,key2=value2
+                                Extra tags to report, comma separated
+                                (default: "")
 
 --------------------------------------------------------------------------

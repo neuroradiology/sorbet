@@ -65,7 +65,7 @@ cp -aL "{src_dir}"/* "$build_dir"
 pushd "$build_dir" > /dev/null
 
 run_cmd() {{
-    if ! "$@" >> build.log 2>&1; then
+    if ! "$@" < /dev/null >> build.log 2>&1; then
         echo "command $@ failed!"
         cat build.log
         echo "build dir: $build_dir"
@@ -73,12 +73,16 @@ run_cmd() {{
     fi
 }}
 
+# This is a hack. The configure script builds up a command for compiling C
+# files that includes `-fvisibility=hidden`. To override it, our flag needs to
+# come after, so we inject a flag right before the `-o` option that comes near
+# the end of the command via OUTFLAG.
+OUTFLAG="-fvisibility=default -o" \
 CC="{cc}" \
 CFLAGS="{copts}" \
 CXXFLAGS="{copts}" \
-CPPFLAGS="${{inc_path[*]:-}} {cppopts}" \
-LDFLAGS="${{lib_path[*]:-}} {linkopts}" \
-OUTFLAG="-fvisibility=default -o" \
+CPPFLAGS="{sysroot_flag} ${{inc_path[*]:-}} {cppopts}" \
+LDFLAGS="{sysroot_flag} ${{lib_path[*]:-}} {linkopts}" \
 run_cmd ./configure \
         {configure_flags} \
         --enable-load-relative \
@@ -91,11 +95,22 @@ run_cmd ./configure \
 run_cmd make V=1 -j8
 run_cmd make V=1 install
 
+ruby_version=$(./miniruby -r ./rbconfig.rb -e 'puts "#{{RbConfig::CONFIG["MAJOR"]}}.#{{RbConfig::CONFIG["MINOR"]}}"')
+
+static_libs="$base/{static_libs}"
+mkdir -p "$static_libs"
+
+cp libruby*-static.a "$static_libs/libruby-static.a"
+
+# from https://github.com/penelopezone/rubyfmt/blob/3051835cc28db04e9d9caf0c8430407ca0347e83/librubyfmt/build.rs#L34
+ar crs "libripper-static.a" ext/ripper/ripper.o
+cp "libripper-static.a" "$static_libs"
+
 internal_incdir="$base/{internal_incdir}"
 
 mkdir -p "$internal_incdir"
 
-cp *.h "$internal_incdir"
+cp *.h *.inc "$internal_incdir"
 
 find ccan -type d | while read dir; do
   mkdir -p "$internal_incdir/$dir"
@@ -174,8 +189,11 @@ def _build_ruby_impl(ctx):
     sharedir = ctx.actions.declare_directory("toolchain/share")
 
     internal_incdir = ctx.actions.declare_directory("toolchain/internal_include")
+    static_libs = ctx.actions.declare_file("toolchain/static_libs")
+    static_lib_ruby = ctx.actions.declare_file("toolchain/static_libs/libruby-static.a")
+    static_lib_ripper = ctx.actions.declare_file("toolchain/static_libs/libripper-static.a")
 
-    outputs = binaries + [libdir, incdir, sharedir, internal_incdir]
+    outputs = binaries + [libdir, incdir, sharedir, internal_incdir, static_libs, static_lib_ruby, static_lib_ripper]
 
     # Build
     ctx.actions.run_shell(
@@ -190,10 +208,14 @@ def _build_ruby_impl(ctx):
             toolchain = libdir.dirname,
             src_dir = src_dir,
             internal_incdir = internal_incdir.path,
+            static_libs = static_libs.path,
+            static_lib_ruby = static_lib_ruby.path,
+            static_lib_ripper = static_lib_ripper.path,
             hdrs = " ".join(hdrs),
             libs = " ".join(libs),
             bundler = ctx.files.bundler[0].path,
             configure_flags = " ".join(ctx.attr.configure_flags),
+            sysroot_flag = ctx.attr.sysroot_flag,
         )),
     )
 
@@ -203,15 +225,19 @@ def _build_ruby_impl(ctx):
             binaries = binaries,
             includes = incdir,
             internal_includes = internal_incdir,
-            runtime = binaries + [libdir, incdir, sharedir],
+            lib = libdir,
+            share = sharedir,
+            static_libs = static_libs,
+            static_lib_ruby = static_lib_ruby,
+            static_lib_ripper = static_lib_ripper,
         ),
         DefaultInfo(
             files = depset(outputs),
         ),
+        CcInfo(),
     ]
 
 _build_ruby = rule(
-    implementation = _build_ruby_impl,
     attrs = {
         "src": attr.label(),
         "deps": attr.label_list(),
@@ -234,10 +260,16 @@ _build_ruby = rule(
         "_cc_toolchain": attr.label(
             default = Label("@bazel_tools//tools/cpp:current_cc_toolchain"),
         ),
+        "sysroot_flag": attr.string(),
     },
-    provides = [RubyInfo, DefaultInfo],
-    toolchains = ["@bazel_tools//tools/cpp:toolchain_type"],
     fragments = ["cpp"],
+    provides = [
+        RubyInfo,
+        DefaultInfo,
+        CcInfo,
+    ],
+    toolchains = ["@bazel_tools//tools/cpp:toolchain_type"],
+    implementation = _build_ruby_impl,
 )
 
 _BUILD_ARCHIVE = """#!/bin/bash
@@ -247,7 +279,12 @@ _BUILD_ARCHIVE = """#!/bin/bash
 base=$PWD
 toolchain="$base/{toolchain}"
 
-hermetic_tar "$toolchain" "{output}"
+archive="$(mktemp)"
+
+hermetic_tar "$toolchain" "${{archive}}"
+gzip -c "${{archive}}" > "{output}"
+
+rm "${{archive}}"
 """
 
 def _ruby_archive_impl(ctx):
@@ -257,7 +294,7 @@ def _ruby_archive_impl(ctx):
 
     ctx.actions.run_shell(
         outputs = [archive],
-        inputs = ruby_info.runtime,
+        inputs = ruby_info.binaries + [ruby_info.includes, ruby_info.lib, ruby_info.share],
         command = ctx.expand_location(_BUILD_ARCHIVE.format(
             hermetic_tar_setup = _HERMETIC_TAR,
             toolchain = ruby_info.toolchain,
@@ -270,21 +307,27 @@ def _ruby_archive_impl(ctx):
     return [DefaultInfo(files = depset([archive]))]
 
 _ruby_archive = rule(
-    implementation = _ruby_archive_impl,
     attrs = {
         "ruby": attr.label(),
     },
     provides = [DefaultInfo],
+    implementation = _ruby_archive_impl,
 )
 
 _BINARY_WRAPPER = """#!/bin/bash
 
 {runfiles_setup}
 
-exec "$(rlocation {workspace}/toolchain/bin/{binary})" "$@"
+binary_path="$(rlocation {workspace}/toolchain/bin/{binary})"
+
+export PATH="$(dirname "$binary_path"):$PATH"
+
+exec "$binary_path" "$@"
 """
 
 def _ruby_binary_impl(ctx):
+    workspace = ctx.label.workspace_name
+
     ruby_info = ctx.attr.ruby[RubyInfo]
 
     wrapper = ctx.actions.declare_file(ctx.label.name)
@@ -303,28 +346,39 @@ def _ruby_binary_impl(ctx):
         output = wrapper,
         content = _BINARY_WRAPPER.format(
             runfiles_setup = _RUNFILES_BASH,
-            workspace = ctx.label.workspace_name,
+            workspace = workspace,
             binary = ctx.label.name,
         ),
         is_executable = True,
     )
 
-    runfiles_bash = ctx.attr._runfiles_bash[DefaultInfo].files
+    runfiles_bash = ctx.attr._runfiles_bash[DefaultInfo].default_runfiles
 
-    runfiles = ctx.runfiles(files = runfiles_bash.to_list() + ruby_info.runtime)
+    symlinks = {}
+
+    symlinks["{}/toolchain/include".format(workspace)] = ruby_info.includes
+    symlinks["{}/toolchain/lib".format(workspace)] = ruby_info.lib
+    symlinks["{}/toolchain/share".format(workspace)] = ruby_info.share
+
+    for target in ruby_info.binaries:
+        symlinks["{}/toolchain/bin/{}".format(workspace, target.basename)] = target
+
+    runfiles = ctx.runfiles(root_symlinks = symlinks)
+    runfiles = runfiles.merge(runfiles_bash)
+    runfiles_bash = ctx.attr._runfiles_bash[DefaultInfo].files
 
     return [DefaultInfo(executable = wrapper, runfiles = runfiles)]
 
 _ruby_binary = rule(
-    implementation = _ruby_binary_impl,
     attrs = {
         "ruby": attr.label(),
         "_runfiles_bash": attr.label(
             default = Label("@bazel_tools//tools/bash/runfiles"),
         ),
     },
-    provides = [DefaultInfo],
     executable = True,
+    provides = [DefaultInfo],
+    implementation = _ruby_binary_impl,
 )
 
 def _uses_headers(ctx, paths, headers):
@@ -362,16 +416,19 @@ def _ruby_headers_impl(ctx):
     return _uses_headers(ctx, paths, headers)
 
 _ruby_headers = rule(
-    implementation = _ruby_headers_impl,
     attrs = {
         "ruby": attr.label(),
         "_cc_toolchain": attr.label(
             default = Label("@bazel_tools//tools/cpp:current_cc_toolchain"),
         ),
     },
-    toolchains = ["@bazel_tools//tools/cpp:toolchain_type"],
-    provides = [DefaultInfo, CcInfo],
     fragments = ["cpp"],
+    provides = [
+        DefaultInfo,
+        CcInfo,
+    ],
+    toolchains = ["@bazel_tools//tools/cpp:toolchain_type"],
+    implementation = _ruby_headers_impl,
 )
 
 def _ruby_internal_headers_impl(ctx):
@@ -384,16 +441,65 @@ def _ruby_internal_headers_impl(ctx):
     return _uses_headers(ctx, paths, headers)
 
 _ruby_internal_headers = rule(
-    implementation = _ruby_internal_headers_impl,
     attrs = {
         "ruby": attr.label(),
         "_cc_toolchain": attr.label(
             default = Label("@bazel_tools//tools/cpp:current_cc_toolchain"),
         ),
     },
-    toolchains = ["@bazel_tools//tools/cpp:toolchain_type"],
-    provides = [DefaultInfo, CcInfo],
     fragments = ["cpp"],
+    provides = [
+        DefaultInfo,
+        CcInfo,
+    ],
+    toolchains = ["@bazel_tools//tools/cpp:toolchain_type"],
+    implementation = _ruby_internal_headers_impl,
+)
+
+def _rubyfmt_static_deps_impl(ctx):
+    ruby_info = ctx.attr.ruby[RubyInfo]
+
+    libs = [ruby_info.static_lib_ruby, ruby_info.static_lib_ripper]
+    cc_toolchain = find_cpp_toolchain(ctx)
+
+    cc_toolchain = ctx.attr._cc_toolchain[cc_common.CcToolchainInfo]
+    feature_configuration = cc_common.configure_features(
+        ctx = ctx,
+        cc_toolchain = cc_toolchain,
+        requested_features = ctx.features,
+        unsupported_features = ctx.disabled_features,
+    )
+
+    build = []
+
+    for file in libs:
+        library_to_link = cc_common.create_library_to_link(
+            cc_toolchain = cc_toolchain,
+            actions = ctx.actions,
+            feature_configuration = feature_configuration,
+            static_library = file,
+        )
+        build.append(library_to_link)
+
+    build = depset(build)
+    li = cc_common.create_linker_input(
+        owner = ctx.label,
+        libraries = build,
+    )
+    lc = cc_common.create_linking_context(linker_inputs = depset([li]))
+    return [CcInfo(linking_context = lc)]
+
+_rubyfmt_static_deps = rule(
+    attrs = {
+        "ruby": attr.label(
+            providers = [CcInfo],
+        ),
+        "_cc_toolchain": attr.label(
+            default = Label("@bazel_tools//tools/cpp:current_cc_toolchain"),
+        ),
+    },
+    fragments = ["cpp"],
+    implementation = _rubyfmt_static_deps_impl,
 )
 
 def ruby(bundler, configure_flags = [], copts = [], cppopts = [], linkopts = [], deps = []):
@@ -416,6 +522,11 @@ def ruby(bundler, configure_flags = [], copts = [], cppopts = [], linkopts = [],
         cppopts = cppopts,
         linkopts = linkopts,
         deps = deps,
+        # This is a hack because macOS Catalina changed the way that system headers and libraries work.
+        sysroot_flag = select({
+            "@com_stripe_ruby_typer//tools/config:darwin": "-isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+            "//conditions:default": "",
+        }),
     )
 
     _ruby_headers(
@@ -450,6 +561,24 @@ def ruby(bundler, configure_flags = [], copts = [], cppopts = [], linkopts = [],
 
     _ruby_binary(
         name = "gem",
+        ruby = ":ruby-dist",
+        visibility = ["//visibility:public"],
+    )
+
+    _ruby_binary(
+        name = "bundler",
+        ruby = ":ruby-dist",
+        visibility = ["//visibility:public"],
+    )
+
+    _ruby_binary(
+        name = "bundle",
+        ruby = ":ruby-dist",
+        visibility = ["//visibility:public"],
+    )
+
+    _rubyfmt_static_deps(
+        name = "rubyfmt-static-deps",
         ruby = ":ruby-dist",
         visibility = ["//visibility:public"],
     )

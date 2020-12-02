@@ -71,6 +71,12 @@ behavior:
   Pin the sorbet-typed cache to a specific revision. (The default is to fetch
   and use the latest `master` commit.)
 
+- `SRB_SKIP_GEM_RBIS`
+
+  Disables the loading of
+  [RBI files exported from gems](https://sorbet.org/docs/rbi#rbis-within-gems).
+  This allows the LSP mode to work properly even when some gems in the Gemfile
+  are exporting RBI files.
 
 ## Running locally
 
@@ -94,29 +100,22 @@ To make this easier, you can either
 To run all the tests:
 
 ```
-test/snapshot/driver.sh
+bazel test //gems/sorbet/test/snapshot
 ```
 
-The driver.sh output should show you how to re-run a single failing test, but an
-example is like this:
+You'll see the name of each test in the output of the above command. To run that individual test:
 
 ```
-test/snapshot/test_one.sh test/snapshot/total/empty
+bazel test //gems/sorbet/test/snapshot:test_<testname>
 ```
 
-There are more options to `driver.sh` and `test_one.sh`. For the full list of
-available options, use `--help`:
+For example:
 
 ```
-test/snapshot/driver.sh --help
-
-test/snapshot/test_one.sh --help
+bazel test //gems/sorbet/test/snapshot:test_ruby_2_6/partial/local_rvm_gemset_gem
 ```
-
 
 ## Writing tests
-
-It's currently only possible to test `srb init`, not any other subcommand.
 
 We use two kinds of tests to test `srb init`: total snapshot tests and partial
 snapshot tests. The anatomy of a snapshot test looks like this:
@@ -138,15 +137,42 @@ test/snapshot/(total|partial)/<testname>/
 └── src/
     ├── Gemfile
     ├── Gemfile.lock
+    ├── test.sh (optional)
     └── ···
 ```
 
 So a snapshot test consists of a `src/` folder declaring a small Ruby project,
-with a `Gemfile`, `Gemfile.lock`, and zero or more Ruby files. The test then
-also has an `expected` folder, which can be used to snapshot
+with a `Gemfile`, `Gemfile.lock`, zero or more Ruby files as well as optional
+`test.sh` script.
 
-- the stdout of running `srb init` (`out.log`)
-- the stderr of running `srb init` (`err.log`)
+By default, the test framework only checks the result of `srb init`.
+The `test.sh` script can be used to change that behavior and list the commands
+that must be ran in the context of the test.
+
+For example, to test the behavior of `srb init` then `srb tc`, the `test.sh`
+script will look like this:
+
+```bash
+#!/bin/bash
+bundle exec "$1" init
+bundle exec "$1" tc
+```
+
+Where `$1` is the path to `srb` provided by the test framework.
+
+The test framework *always* expects the `test.sh` script to finish without error.
+If you want to check the output of a command *expected* to fail, you can use bash
+to control what the script should return:
+
+```bash
+#!/bin/bash
+bundle exec "$1" tc || exit 0 # we expect this command to fail
+```
+
+The test then also has an `expected` folder, which can be used to snapshot:
+
+- the stdout of running `srb init` or `test.sh` (`out.log`)
+- the stderr of running `srb init` or `test.sh` (`err.log`)
 - resulting `sorbet/` folder for this project
 
 The difference between a total snapshot test and a partial snapshot test deals
@@ -157,11 +183,11 @@ with the `expected/` folder:
   `expected/` folder.
 
 - For a partial test, only the files explicitly mentioned in the `expected/`
-  folder must match. The actual output of `srb init` might contain more than is
+  folder must match. The actual output of the test might contain more than is
   snapshotted.
 
   Note that the entire `expected/` folder is optional for a partial test. Such a
-  test will merely assert that `srb init` runs to termination without error.
+  test will merely assert that the test runs to termination without error.
 
 We **prefer partial tests** because they're more specific and more robust to
 changes in implementation details. Use total tests only when you must test the
@@ -180,34 +206,24 @@ of a test using the `gems/` folder.
 
 ### Updating tests
 
-When it **is** necessary to update a snapshot test, run one of:
+When it **is** necessary to update a snapshot test:
 
 ```
-test/snapshot/driver.sh --update
+bazel test //gems/sorbet/test/snapshot:update_<testname>
+```
 
-test/snapshot/test_one.sh <testname> --update
+For example:
+
+```
+bazel test //gems/sorbet/test/snapshot:update_ruby_2_6/partial/local_rvm_gemset_gem
 ```
 
 ### Creating new partial tests
 
 A total test can never be empty, so to record a new total test, just use
-`--update`, like above.
+`update`, like above.
 
 Since a partial test is allowed to have an empty `expected/` folder, there's no
 difference between "a new partial test" and "an existing partial test that just
-asserts no errors". As such, to populate the `expected/` folder of a new partial
-test, use the `--record` flag:
-
-```
-test/snapshot/test_one.sh <testname> --update --record
-```
-
-### Debugging tests
-
-To use `binding.pry` to debug a test, edit your test case and/or the `srb` gem
-to require and call `pry`, and then pass the `--debug` flag when running the
-test:
-
-```
-test/snapshot/test_one.sh <testname> --debug
-```
+asserts no errors". As such, you'll have to manually populate the `expected/`
+with the files you want checked.

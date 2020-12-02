@@ -19,6 +19,7 @@
 // This is an implementation of LSP protocol (version 3.13) for Sorbet
 namespace sorbet::realmain::lsp {
 
+class MarkupContent;
 class LSPInput;
 class LSPConfiguration;
 class LSPQueuePreemptionTask;
@@ -62,7 +63,7 @@ class LSPLoop {
 
 public:
     LSPLoop(std::unique_ptr<core::GlobalState> initialGS, WorkerPool &workers,
-            const std::shared_ptr<LSPConfiguration> &config);
+            const std::shared_ptr<LSPConfiguration> &config, std::unique_ptr<KeyValueStore> kvstore);
     /**
      * Runs the language server on a dedicated thread. Returns the final global state if it exits cleanly, or nullopt
      * on error.
@@ -82,15 +83,16 @@ public:
     int getTypecheckCount();
 };
 
+// TODO(jvilk): Move to LSPTask.
 std::optional<std::string> findDocumentation(std::string_view sourceCode, int beginIndex);
 bool hasSimilarName(const core::GlobalState &gs, core::NameRef name, std::string_view pattern);
 bool hideSymbol(const core::GlobalState &gs, core::SymbolRef sym);
 std::unique_ptr<MarkupContent> formatRubyMarkup(MarkupKind markupKind, std::string_view rubyMarkup,
                                                 std::optional<std::string_view> explanation);
-std::string prettyTypeForMethod(const core::GlobalState &gs, core::SymbolRef method, core::TypePtr receiver,
-                                core::TypePtr retType, const core::TypeConstraint *constraint);
+std::string prettyTypeForMethod(const core::GlobalState &gs, core::SymbolRef method, const core::TypePtr &receiver,
+                                const core::TypePtr &retType, const core::TypeConstraint *constraint);
 std::string prettyTypeForConstant(const core::GlobalState &gs, core::SymbolRef constant);
-core::TypePtr getResultType(const core::GlobalState &gs, core::TypePtr type, core::SymbolRef inWhat,
+core::TypePtr getResultType(const core::GlobalState &gs, const core::TypePtr &type, core::SymbolRef inWhat,
                             core::TypePtr receiver, const core::TypeConstraint *constr);
 SymbolKind symbolRef2SymbolKind(const core::GlobalState &gs, core::SymbolRef sym);
 

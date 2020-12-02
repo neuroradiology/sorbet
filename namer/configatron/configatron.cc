@@ -75,7 +75,7 @@ struct Path {
     string show(core::GlobalState &gs) const {
         fmt::memory_buffer buf;
         if (myType) {
-            fmt::format_to(buf, "{} -> {}", toString(), myType->toString(gs));
+            fmt::format_to(buf, "{} -> {}", toString(), myType.toString(gs));
         }
         fmt::format_to(buf, "{}",
                        fmt::map_join(children, "", [&](const auto &child) -> string { return child->show(gs); }));
@@ -97,9 +97,9 @@ struct Path {
         return children.emplace_back(make_shared<Path>(this, string(name)));
     }
 
-    void setType(core::GlobalState &gs, core::TypePtr tp) {
+    void setType(core::GlobalState &gs, const core::TypePtr &tp) {
         if (myType) {
-            myType = core::Types::any(core::MutableContext(gs, core::Symbols::root()), myType, tp);
+            myType = core::Types::any(gs, myType, tp);
         } else {
             myType = tp;
         }
@@ -145,8 +145,7 @@ void recurse(core::GlobalState &gs, const YAML::Node &node, shared_ptr<Path> pre
             for (const auto &child : node) {
                 auto thisElemType = child.IsScalar() ? getType(gs, child) : core::Types::untypedUntracked();
                 if (elemType) {
-                    elemType =
-                        core::Types::any(core::MutableContext(gs, core::Symbols::root()), elemType, thisElemType);
+                    elemType = core::Types::any(gs, elemType, thisElemType);
                 } else {
                     elemType = thisElemType;
                 }
@@ -155,7 +154,7 @@ void recurse(core::GlobalState &gs, const YAML::Node &node, shared_ptr<Path> pre
                 elemType = core::Types::bottom();
             }
             vector<core::TypePtr> elems{elemType};
-            prefix->setType(gs, core::make_type<core::AppliedType>(core::Symbols::Array(), elems));
+            prefix->setType(gs, core::make_type<core::AppliedType>(core::Symbols::Array(), move(elems)));
             break;
         }
         case YAML::NodeType::Map:
@@ -199,6 +198,7 @@ void handleFile(core::GlobalState &gs, const string &file, shared_ptr<Path> root
 
 void configatron::fillInFromFileSystem(core::GlobalState &gs, const vector<string> &folders,
                                        const vector<string> &files) {
+    Timer timeit(gs.tracer(), "configatron");
     auto rootNode = make_shared<Path>(nullptr, "");
     for (auto &folder : folders) {
         auto files = FileOps::listFilesInDir(folder, {".yaml"}, true, {}, {});

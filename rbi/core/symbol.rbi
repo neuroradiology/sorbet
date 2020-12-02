@@ -52,7 +52,7 @@ class Symbol < Object
   # See String#<=> for more information.
   sig do
     params(
-        other: Symbol,
+        other: Object,
     )
     .returns(T.nilable(Integer))
   end
@@ -66,6 +66,9 @@ class Symbol < Object
     .returns(T::Boolean)
   end
   def ==(obj); end
+
+  # Equality---If *sym* and *obj* are exactly the same symbol, returns `true`.
+  def ===(_); end
 
   # Returns `sym.to_s =~ obj`.
   sig do
@@ -215,7 +218,7 @@ class Symbol < Object
     params(
         obj: BasicObject,
     )
-    .returns(T.nilable(Integer))
+    .returns(T.nilable(MatchData))
   end
   def match(obj); end
 
@@ -223,7 +226,7 @@ class Symbol < Object
   sig do
     params(
         args: T.untyped
-    ).returns(T.untyped)
+    ).returns(T::Boolean)
   end
   def match?(*args); end
 

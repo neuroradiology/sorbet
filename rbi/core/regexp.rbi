@@ -869,12 +869,12 @@ class Regexp < Object
   # Regexp.last_match(:lhs) #=> "var"
   # Regexp.last_match(:rhs) #=> "val"
   # ```
-  sig {returns(MatchData)}
+  sig {returns(T.nilable(MatchData))}
   sig do
     params(
-        arg0: Integer,
+      arg0: T.any(Integer, Symbol),
     )
-    .returns(String)
+    .returns(T.nilable(String))
   end
   def self.last_match(arg0=T.unsafe(nil)); end
 
@@ -1128,6 +1128,20 @@ class Regexp < Object
     .returns(T.type_parameter(:U))
   end
   def match(arg0, arg1=T.unsafe(nil), &blk); end
+
+  # Returns a true or false indicates whether the regexp is matched or
+  # not without updating $~ and other related variables. If the second
+  # parameter is present, it specifies the position in the string to
+  # begin the search.
+  # https://ruby-doc.org/core-2.7.0/Regexp.html#method-i-match-3F
+  sig do
+    params(
+        arg0: T.nilable(T.any(String, Symbol)),
+        arg1: T.nilable(Integer),
+    )
+    .returns(T::Boolean)
+  end
+  def match?(arg0, arg1=T.unsafe(nil)); end
 
   # Returns a hash representing information about named captures of *rxp*.
   #

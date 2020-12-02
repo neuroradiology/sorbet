@@ -81,9 +81,9 @@ class A
 
   sig {void}
   def initialize
-    reader = T.let(0, Integer)
-    writer = T.let(0, Integer)
-    accessor = T.let(0, Integer)
+    @reader = T.let(0, Integer)
+    @writer = T.let(0, Integer)
+    @accessor = T.let(0, Integer)
   end
 end
 ```
@@ -160,6 +160,75 @@ out-of-bounds. If you would rather raise an exception than handle `nil`, use the
 [0, 1, 2].fetch(3) # IndexError: index 3 outside of array bounds
 ```
 
+## Why is `super` is untyped, even when the parent method has a `sig`?
+
+Sorbet can't know what the "parent method" is 100% of the time. For example,
+when calling `super` from a method defined in a module, the `super` method will
+be determined only once we know which class or module this module has been mixed
+into. That's a lot of words, so here's an example:
+
+<a href="https://sorbet.run/#%23%20typed%3A%20true%0Amodule%20MyModule%0A%20%20sig%20%7Breturns(Integer)%7D%0A%20%20def%20foo%0A%20%20%20%20%23%20Can't%20know%20super%20until%20we%20know%20which%20module%20we're%20mixed%20into%0A%20%20%20%20res%20%3D%20super%0A%20%20%20%20T.reveal_type(res)%0A%20%20%20%20res%0A%20%20end%0Aend%0A%0Amodule%20ParentModule1%0A%20%20sig%20%7Breturns(Integer)%7D%0A%20%20def%20foo%0A%20%20%20%200%0A%20%20end%0Aend%0A%0Amodule%20ParentModule2%0A%20%20sig%20%7Breturns(String)%7D%0A%20%20def%20foo%0A%20%20%20%20''%0A%20%20end%0Aend%0A%0Aclass%20MyClass1%0A%20%20include%20ParentModule1%0A%20%20include%20MyModule%0Aend%0A%0Aclass%20MyClass2%0A%20%20include%20ParentModule2%0A%20%20include%20MyModule%0Aend%0A%0AMyClass1.new.foo%0AMyClass2.new.foo%0A">→
+View on sorbet.run</a>
+
+To typecheck this example, Sorbet would have to typecheck `MyModule#foo`
+multiple times, once for each place that method might be used from, or place
+restrictions on how and where this module can be included.
+
+Sorbet might adopt a more sophisticated approach in the future, but for now it
+falls back to treating `super` as a method call that accepts anything and
+returns anything.
+
+## Does Sorbet work with Rake and Rakefiles?
+
+Kind of, with some effort. Rake monkey patches the global `main` object (i.e.,
+top-level code) to extend their DSL, which Sorbet cannot understand:
+
+```ruby
+# -- from lib/rake/dsl_definition.rb --
+
+...
+
+# Extend the main object with the DSL commands. This allows top-level
+# calls to task, etc. to work from a Rakefile without polluting the
+# object inheritance tree.
+self.extend Rake::DSL
+```
+
+→
+[lib/rake/dsl_definition.rb](https://github.com/ruby/rake/blob/80e00e2d59ea5b230f2f0416c387c0b57184f1ff/lib/rake/dsl_definition.rb#L192-L195)
+
+Sorbet cannot model that a single instance of an object (in this case `main`)
+has a different inheritance hierarchy than that instance's class (in this case
+`Object`).
+
+To get around this, factor out all tasks defined the `Rakefile` that should be
+typechecked into an explicit class in a separate file, something like this:
+
+```ruby
+# -- my_rake_tasks.rb --
+
+# (1) Make a proper class inside a file with a *.rb extension
+class MyRakeTasks
+  # (2) Explicitly extend Rake::DSL in this class
+  extend Rake::DSL
+
+  # (3) Define tasks like normal:
+  task :test do
+    puts 'Testing...'
+  end
+
+  # ... more tasks ...
+end
+
+# -- Rakefile --
+
+# (4) Require that file from the Rakefile
+require_relative './my_rake_tasks'
+```
+
+For more information, see
+[this StackOverflow question](https://stackoverflow.com/a/60556206/1015863).
+
 ## How do I upgrade Sorbet?
 
 Sorbet has not reached version 1.0 yet. As such, it will make breaking changes
@@ -183,13 +252,17 @@ bundle exec srb rbi suggest-typed
 
 ## What platforms does Sorbet support?
 
-The `sorbet` and `sorbet-runtime` gems are currently only tested on Ruby 2.4. We
-expect it to work on Ruby 2.3 through 2.6.
+The `sorbet` and `sorbet-runtime` gems are currently only tested on Ruby 2.5 and
+Ruby 2.6.
 
-The static check is only tested on macOS 10.14 (Mojave) and Ubuntu 18 (Bionic
+Ruby 2.7 has
+[known issues](https://github.com/sorbet/sorbet/issues?q=is%3Aissue+2.7+) and is
+[not being worked on yet](https://github.com/sorbet/sorbet/issues/2771#issuecomment-599761098)
+(as of May 2020) but PRs are welcome!
+
+The static checker is only tested on macOS 10.14 (Mojave) and Ubuntu 18 (Bionic
 Beaver). We expect it to work on macOS 10.10 (Yosemite) and most Linux
-distributions where `glibc`, `git` and `bash` are present. We use static linking
-on both platforms, so it should not depend on system libraries.
+distributions where `glibc`, `git` and `bash` are present.
 
 If you are using one of the official minimal Ruby Docker images you will need to
 install the extra dependencies yourself:
@@ -232,9 +305,64 @@ Also see the [Community] page for more community-maintained projects!
 
 [sord]: https://github.com/AaronC81/sord
 
-## Can Sorbet produce statistics?
+## When Ruby 3 gets types, what will the migration plan look like?
 
-Yes, you can use options like `--metrics-file` to produce statistics. For
-example, check out
-[sorbet-progress](https://github.com/jaredbeck/sorbet-progress) which uses those
-statistics to keep track of your progress adopting sorbet in big codebases.
+The Sorbet team is actively involved in the Ruby 3 working group for static
+typing. There are some things we know and something we don't know about Ruby 3.
+
+Ruby 3 plans to ship type annotations for the standard library. These type
+annotations for the standard library will live in separate Ruby Signature (RBS)
+files, with the `*.rbs` extension. The exact syntax is not yet finalized. When
+the syntax is finalized, Sorbet intends to ingest both RBS and RBI formats, so
+that users can choose their favorite.
+
+Ruby 3 has no plans to change Ruby's syntax. To have type annotations for
+methods live in the same place as the method definition, the only option will be
+to continue using Sorbet's [method signatures](sigs.md). As such, the Sorbet
+docs will always use RBI syntax in examples, because the syntax is the same for
+signatures both within a Ruby file and in external [RBI files](rbi.md).
+
+Ruby 3 has no plans to ship a type checker for RBS annotations. Instead, Ruby 3
+plans to ship a type profiler, which will attempt to guess signatures for code
+without signatures. The only way to get type checking will be to use third party
+tools, like Sorbet.
+
+Ruby 3 plans to ship no specification for what the type annotations mean. Each
+third party type checker and the Ruby 3 type profiler will be allowed to ascribe
+their own meanings to individual type annotations. When there are ambiguities or
+constructs that one tool doesn't understand, it should fall back to `T.untyped`
+(or the equivalent in whatever RBS syntax decides to use for
+[this construct](untyped.md)).
+
+Ruby 3 plans to seed the initial type annotations for the standard library from
+Sorbet's extensive existing type annotations for the standard library. Sorbet
+already has great type annotations for the standard library in the form of
+[RBI files](rbi.md) which are used to type check millions of lines of production
+Ruby code every day.
+
+From all of this, we have every reason to believe that users of Sorbet will have
+a smooth transition to Ruby 3:
+
+- You will be able to either keep using Sorbet's RBI syntax or switch to using
+  RBS syntax.
+- The type definitions for the standard library will mean the same (because they
+  will have come from Sorbet!) but have a different syntax.
+- For inline type annotations with Ruby 3, you will have to continue using
+  Sorbet's `sig` syntax, no different from today.
+
+For more information, watch [this section](https://youtu.be/2g9R7PUCEXo?t=2022)
+from Matz's RubyConf 2019 keynote, which talks about his plans for typing in
+Ruby 3.
+
+## Can I use Sorbet for duck typed code?
+
+No. You can use an [interface](abstract.md) instead, or `T.untyped` if you do
+not control all of the code.
+
+Duck typing (or, more formally, Structural typing) specifies types by their
+structure. For example, Rack middleware accepts any object that has a `call`
+method which takes one argument and returns a tuple representing an HTTP
+response.
+
+Sorbet does not support duck typing either for static analysis or runtime
+checking.

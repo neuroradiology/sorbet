@@ -90,6 +90,29 @@ class T::Enum::Test::EnumTest < Critic::Unit::UnitTest
     end
   end
 
+  describe 'each_value' do
+    it 'yields values given block' do
+      result = []
+      CardSuit.each_value do |val|
+        result << val
+      end
+
+      assert_equal(
+        [CardSuit::CLUB, CardSuit::SPADE, CardSuit::DIAMOND, CardSuit::HEART],
+        result,
+      )
+    end
+
+    it 'returns values given no block' do
+      result = CardSuit.each_value.to_a
+
+      assert_equal(
+        [CardSuit::CLUB, CardSuit::SPADE, CardSuit::DIAMOND, CardSuit::HEART],
+        result,
+      )
+    end
+  end
+
   describe 'from_serialized' do
     it 'returns the corresponding enum instance' do
       club = CardSuit.from_serialized('club')
@@ -120,6 +143,10 @@ class T::Enum::Test::EnumTest < Critic::Unit::UnitTest
       assert_equal(true, CardSuitCustom.has_serialized?('_spade_'))
       assert_equal(false, CardSuitCustom.has_serialized?('spade'))
       assert_equal(false, CardSuitCustom.has_serialized?('blerg'))
+    end
+
+    it 'does not break for arbitrary objects' do
+      assert_equal(false, CardSuitCustom.has_serialized?(Class.new.new))
     end
   end
 
@@ -334,7 +361,7 @@ class T::Enum::Test::EnumTest < Critic::Unit::UnitTest
 
     it 'raises an assertion if to_str is called (implicitly) and also returns the serialized value' do
       ex = assert_raises(NoMethodError) do
-        'foo ' + CardSuit::HEART
+        'foo ' + CardSuit::HEART # rubocop:disable Style/StringConcatenation
       end
       assert_equal(ENUM_CONVERSION_MSG, ex.message)
     end
@@ -358,11 +385,13 @@ class T::Enum::Test::EnumTest < Critic::Unit::UnitTest
     end
 
     it 'raises an assertion if to_str is called (implicitly) and also returns the serialized value' do
-      assert_equal('foo heart', 'foo ' + CardSuit::HEART)
+      assert_equal('foo heart', 'foo ' + CardSuit::HEART) # rubocop:disable Style/StringConcatenation
     end
   end
 
   describe 'string value comparison assertions' do
+    # rubocop:disable Style/YodaCondition
+
     it 'returns false if the types mismatch for ==' do
       assert_equal(false, 'spade' == CardSuit::SPADE)
       assert_equal(false, 'diamond' == CardSuit::SPADE)
@@ -376,6 +405,8 @@ class T::Enum::Test::EnumTest < Critic::Unit::UnitTest
       assert_equal(false, CardSuit::SPADE === 'spade')
       assert_equal(false, CardSuit::CLUB === 'spade')
     end
+
+    # rubocop:enable Style/YodaCondition
 
     it 'returns false for a string in a `when` compared to an enum value' do
       val = CardSuit::SPADE
@@ -412,6 +443,8 @@ class T::Enum::Test::EnumTest < Critic::Unit::UnitTest
       T::Configuration.disable_legacy_t_enum_migration_mode
     end
 
+    # rubocop:disable Style/YodaCondition
+
     it 'raises an assertion if string is lhs of comparison' do
       assert_equal(true, 'spade' == CardSuit::SPADE)
 
@@ -435,6 +468,8 @@ class T::Enum::Test::EnumTest < Critic::Unit::UnitTest
 
       assert_equal(false, CardSuit::CLUB === 'spade')
     end
+
+    # rubocop:enable Style/YodaCondition
 
     it 'raises an assertion for a string in a `when` compared to an enum value' do
       val = CardSuit::SPADE

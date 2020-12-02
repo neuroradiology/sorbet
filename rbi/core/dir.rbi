@@ -62,6 +62,18 @@ class Dir < Object
   end
   def self.chdir(arg0=T.unsafe(nil), &blk); end
 
+  # Returns an array containing all of the filenames except for "." and ".." in
+  # the given directory. Will raise a `SystemCallError` if the named directory
+  # doesn't exist.
+  #
+  # The optional *encoding* keyword argument specifies the encoding of the
+  # directory. If not specified, the filesystem encoding is used.
+  #
+  # ```ruby
+  # Dir.children("testdir")   #=> ["config.h", "main.rb"]
+  # ```
+  def self.children(*_); end
+
   # Changes this process's idea of the file system root. Only a privileged
   # process may make this call. Not available on all platforms. On Unix systems,
   # see `chroot(2)` for more information.
@@ -83,6 +95,27 @@ class Dir < Object
   end
   def self.delete(arg0); end
 
+  # Calls the block once for each entry except for "." and ".." in the named
+  # directory, passing the filename of each entry as a parameter to the block.
+  #
+  # If no block is given, an enumerator is returned instead.
+  #
+  # ```ruby
+  # Dir.each_child("testdir") {|x| puts "Got #{x}" }
+  # ```
+  #
+  # *produces:*
+  #
+  # ```ruby
+  # Got config.h
+  # Got main.rb
+  # ```
+  def self.each_child(*_); end
+
+  # Returns `true` if the named file is an empty directory, `false` if it is not
+  # a directory or non-empty.
+  def self.empty?(_); end
+
   # Returns an array containing all of the filenames in the given directory.
   # Will raise a `SystemCallError` if the named directory doesn't exist.
   #
@@ -94,7 +127,7 @@ class Dir < Object
   # ```
   sig do
     params(
-        arg0: String,
+        arg0: T.any(String, Pathname),
         arg1: Encoding,
     )
     .returns(T::Array[String])
@@ -104,7 +137,7 @@ class Dir < Object
   # Returns `true` if the named file is a directory, `false` otherwise.
   sig do
     params(
-        file: String,
+        file: T.any(String, Pathname),
     )
     .returns(T::Boolean)
   end
@@ -129,7 +162,7 @@ class Dir < Object
   # ```
   sig do
     params(
-        dir: String,
+        dir: T.any(String, Pathname),
         arg0: Encoding,
         blk: T.proc.params(arg0: String).returns(BasicObject),
     )
@@ -137,7 +170,7 @@ class Dir < Object
   end
   sig do
     params(
-        dir: String,
+        dir: T.any(String, Pathname),
         arg0: Encoding,
     )
     .returns(T::Enumerator[String])
@@ -250,19 +283,36 @@ class Dir < Object
   sig do
     params(
         pattern: T.any(String, T::Array[String]),
-        flags: Integer,
+        flags: T.nilable(Integer),
+        opts: T.nilable(T::Hash[Symbol, String]),
     )
     .returns(T::Array[String])
   end
   sig do
     params(
         pattern: T.any(String, T::Array[String]),
-        flags: Integer,
+        flags: T.nilable(Integer),
+        opts: T.nilable(T::Hash[Symbol, String]),
         blk: T.proc.params(arg0: String).returns(BasicObject),
     )
     .returns(NilClass)
   end
-  def self.glob(pattern, flags=T.unsafe(nil), &blk); end
+  sig do
+    params(
+        pattern: T.any(String, T::Array[String]),
+        opts: T.nilable(T::Hash[Symbol, String]),
+        blk: T.proc.params(arg0: String).returns(BasicObject),
+    )
+    .returns(NilClass)
+  end
+  sig do
+    params(
+        pattern: T.any(String, T::Array[String]),
+        opts: T.nilable(T::Hash[Symbol, String]),
+    )
+    .returns(T::Array[String])
+  end
+  def self.glob(pattern, flags=T.unsafe(nil), opts=T.unsafe(nil), &blk); end
 
   # Returns the home directory of the current user or the named user if given.
   sig do
@@ -299,14 +349,14 @@ class Dir < Object
   # block, and `Dir::open` returns the value of the block.
   sig do
     params(
-        arg0: String,
+        arg0: T.any(String, Pathname),
         arg1: Encoding,
     )
     .returns(Dir)
   end
   sig do
     type_parameters(:U).params(
-        arg0: String,
+        arg0: T.any(String, Pathname),
         arg1: Encoding,
         blk: T.proc.params(arg0: Dir).returns(T.type_parameter(:U)),
     )
@@ -329,17 +379,20 @@ class Dir < Object
   # directory isn't empty.
   sig do
     params(
-        arg0: String,
+        arg0: T.any(String, Pathname),
     )
     .returns(Integer)
   end
   def self.rmdir(arg0); end
 
+  # Returns the operating system's temporary file path.
+  def self.tmpdir; end
+
   # Deletes the named directory. Raises a subclass of `SystemCallError` if the
   # directory isn't empty.
   sig do
     params(
-        arg0: String,
+        arg0: T.any(String, Pathname),
     )
     .returns(Integer)
   end
@@ -514,18 +567,11 @@ class Dir < Object
   # Equivalent to calling `Dir.glob([string,...], 0)`.
   sig do
     params(
-        pattern: T.any(String, T::Array[String]),
-        flags: Integer,
+        pattern: T.any(String, Pathname),
+        base: T.nilable(T.any(String, Pathname)),
+        blk: T.nilable(T.proc.params(arg0: String).returns(BasicObject))
     )
     .returns(T::Array[String])
   end
-  sig do
-    params(
-        pattern: T.any(String, T::Array[String]),
-        flags: Integer,
-        blk: T.proc.params(arg0: String).returns(BasicObject),
-    )
-    .returns(NilClass)
-  end
-  def self.[](pattern, flags=T.unsafe(nil), &blk); end
+  def self.[](*pattern, base: nil, &blk); end
 end

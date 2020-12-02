@@ -1,8 +1,7 @@
 #include "main/lsp/requests/references.h"
-#include "absl/strings/match.h"
 #include "core/lsp/QueryResponse.h"
 #include "main/lsp/ShowOperation.h"
-#include "main/lsp/lsp.h"
+#include "main/lsp/json_types.h"
 
 using namespace std;
 
@@ -17,7 +16,7 @@ bool ReferencesTask::needsMultithreading(const LSPIndexer &indexer) const {
 
 unique_ptr<ResponseMessage> ReferencesTask::runRequest(LSPTypecheckerDelegate &typechecker) {
     auto response = make_unique<ResponseMessage>("2.0", id, LSPMethod::TextDocumentReferences);
-    ShowOperation op(config, "References", "Finding all references...");
+    ShowOperation op(config, ShowOperation::Kind::References);
 
     const core::GlobalState &gs = typechecker.state();
     auto result =
@@ -37,12 +36,21 @@ unique_ptr<ResponseMessage> ReferencesTask::runRequest(LSPTypecheckerDelegate &t
             // N.B.: Ignores literals.
             // If file is untyped, only supports find reference requests from constants and class definitions.
             if (auto constResp = resp->isConstant()) {
-                response->result = getReferencesToSymbol(typechecker, constResp->symbol);
+                response->result =
+                    extractLocations(typechecker.state(), getReferencesToSymbol(typechecker, constResp->symbol));
             } else if (auto fieldResp = resp->isField()) {
-                response->result = getReferencesToSymbol(typechecker, fieldResp->symbol);
+                // This could be a `prop` or `attr_*`, which have multiple associated symbols.
+                response->result = extractLocations(
+                    typechecker.state(),
+                    getReferencesToAccessor(typechecker, getAccessorInfo(typechecker.state(), fieldResp->symbol),
+                                            fieldResp->symbol));
             } else if (auto defResp = resp->isDefinition()) {
                 if (fileIsTyped || defResp->symbol.data(gs)->isClassOrModule()) {
-                    response->result = getReferencesToSymbol(typechecker, defResp->symbol);
+                    // This could be a `prop` or `attr_*`, which have multiple associated symbols.
+                    response->result = extractLocations(
+                        typechecker.state(),
+                        getReferencesToAccessor(typechecker, getAccessorInfo(typechecker.state(), defResp->symbol),
+                                                defResp->symbol));
                 }
             } else if (fileIsTyped && resp->isIdent()) {
                 auto identResp = resp->isIdent();
@@ -56,14 +64,17 @@ unique_ptr<ResponseMessage> ReferencesTask::runRequest(LSPTypecheckerDelegate &t
             } else if (fileIsTyped && resp->isSend()) {
                 auto sendResp = resp->isSend();
                 auto start = sendResp->dispatchResult.get();
-                vector<unique_ptr<Location>> locations;
+                vector<unique_ptr<core::lsp::QueryResponse>> responses;
                 while (start != nullptr) {
-                    if (start->main.method.exists() && !start->main.receiver->isUntyped()) {
-                        locations = getReferencesToSymbol(typechecker, start->main.method, move(locations));
+                    if (start->main.method.exists() && !start->main.receiver.isUntyped()) {
+                        // This could be a `prop` or `attr_*`, which has multiple associated symbols.
+                        responses = getReferencesToAccessor(typechecker,
+                                                            getAccessorInfo(typechecker.state(), start->main.method),
+                                                            start->main.method, move(responses));
                     }
                     start = start->secondary.get();
                 }
-                response->result = move(locations);
+                response->result = extractLocations(typechecker.state(), responses);
             }
         }
     }

@@ -529,8 +529,14 @@ class Integer < Numeric
   sig {returns(Integer)}
   def abs2(); end
 
+  # Returns `true` if all bits of `int & mask` are 1.
+  def allbits?(_); end
+
   sig {returns(Numeric)}
   def angle(); end
+
+  # Returns `true` if any bits of `int & mask` are 1.
+  def anybits?(_); end
 
   sig {returns(Numeric)}
   def arg(); end
@@ -650,6 +656,21 @@ class Integer < Numeric
   sig {returns(Integer)}
   def denominator(); end
 
+  # Returns the digits of `int`'s place-value representation with radix `base`
+  # (default: 10). The digits are returned as an array with the least
+  # significant digit as the first array element.
+  #
+  # `base` must be greater than or equal to 2.
+  #
+  # ```ruby
+  # 12345.digits      #=> [5, 4, 3, 2, 1]
+  # 12345.digits(7)   #=> [4, 6, 6, 0, 5]
+  # 12345.digits(100) #=> [45, 23, 1]
+  #
+  # -12345.digits(7)  #=> Math::DomainError
+  # ```
+  def digits(*_); end
+
   # Performs integer division: returns the integer result of dividing `int` by
   # `numeric`.
   sig do
@@ -682,7 +703,13 @@ class Integer < Numeric
   # [`Numeric#divmod`](https://docs.ruby-lang.org/en/2.6.0/Numeric.html#method-i-divmod).
   sig do
     params(
-        arg0: T.any(Integer, Float, Rational, BigDecimal),
+        arg0: Integer,
+    )
+    .returns([Integer, Integer])
+  end
+  sig do
+    params(
+        arg0: T.any(Float, Rational, BigDecimal),
     )
     .returns([T.any(Integer, Float, Rational, BigDecimal), T.any(Integer, Float, Rational, BigDecimal)])
   end
@@ -926,6 +953,9 @@ class Integer < Numeric
   sig {returns(Integer)}
   def next(); end
 
+  # Returns `true` if no bits of `int & mask` are 1.
+  def nobits?(_); end
+
   # Returns self.
   sig {returns(Integer)}
   def numerator(); end
@@ -948,6 +978,14 @@ class Integer < Numeric
 
   sig {returns(Numeric)}
   def phase(); end
+
+  # Returns (modular) exponentiation as:
+  #
+  # ```ruby
+  # a.pow(b)     #=> same as a**b
+  # a.pow(b, m)  #=> same as (a**b) % m, but avoids huge temporary values
+  # ```
+  def pow(*_); end
 
   # Returns the predecessor of `int`, i.e. the
   # [`Integer`](https://docs.ruby-lang.org/en/2.6.0/Integer.html) equal to
@@ -1083,7 +1121,7 @@ class Integer < Numeric
     params(
         arg0: Numeric,
     )
-    .returns(Numeric)
+    .returns(Integer)
   end
   def round(arg0=T.unsafe(nil)); end
 
@@ -1258,4 +1296,33 @@ class Integer < Numeric
   # ```
   sig {returns(Integer)}
   def ~(); end
+
+  # Returns the integer square root of the non-negative integer `n`, i.e. the
+  # largest non-negative integer less than or equal to the square root of `n`.
+  #
+  # ```ruby
+  # Integer.sqrt(0)        #=> 0
+  # Integer.sqrt(1)        #=> 1
+  # Integer.sqrt(24)       #=> 4
+  # Integer.sqrt(25)       #=> 5
+  # Integer.sqrt(10**400)  #=> 10**200
+  # ```
+  #
+  # Equivalent to `Math.sqrt(n).floor`, except that the result of the latter
+  # code may differ from the true value due to the limited precision of floating
+  # point arithmetic.
+  #
+  # ```ruby
+  # Integer.sqrt(10**46)     #=> 100000000000000000000000
+  # Math.sqrt(10**46).floor  #=>  99999999999999991611392 (!)
+  # ```
+  #
+  # If `n` is not an
+  # [`Integer`](https://docs.ruby-lang.org/en/2.6.0/Integer.html), it is
+  # converted to an
+  # [`Integer`](https://docs.ruby-lang.org/en/2.6.0/Integer.html) first. If `n`
+  # is negative, a
+  # [`Math::DomainError`](https://docs.ruby-lang.org/en/2.6.0/Math/DomainError.html)
+  # is raised.
+  def self.sqrt(_); end
 end

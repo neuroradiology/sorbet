@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 # typed: true
 # This is where we define the shortcuts, so we can't use them here
-# rubocop:disable PrisonGuard/UseOpusTypesShortcut
 
 #  _____
 # |_   _|   _ _ __   ___  ___
@@ -26,23 +25,26 @@
 module T
   # T.any(<Type>, <Type>, ...) -- matches any of the types listed
   def self.any(type_a, type_b, *types)
-    T::Types::Union.new([type_a, type_b] + types)
+    type_a = T::Utils.coerce(type_a)
+    type_b = T::Utils.coerce(type_b)
+    types = types.map {|t| T::Utils.coerce(t)} if !types.empty?
+    T::Types::Union::Private::Pool.union_of_types(type_a, type_b, types)
   end
 
   # Shorthand for T.any(type, NilClass)
   def self.nilable(type)
-    T::Types::Union.new([type, NilClass])
+    T::Types::Union::Private::Pool.union_of_types(T::Utils.coerce(type), T::Utils::Nilable::NIL_TYPE)
   end
 
   # Matches any object. In the static checker, T.untyped allows any
   # method calls or operations.
   def self.untyped
-    T::Types::Untyped.new
+    T::Types::Untyped::Private::INSTANCE
   end
 
   # Indicates a function never returns (e.g. "Kernel#raise")
   def self.noreturn
-    T::Types::NoReturn.new
+    T::Types::NoReturn::Private::INSTANCE
   end
 
   # T.all(<Type>, <Type>, ...) -- matches an object that has all of the types listed
@@ -62,12 +64,12 @@ module T
 
   # Matches `self`:
   def self.self_type
-    T::Types::SelfType.new
+    T::Types::SelfType::Private::INSTANCE
   end
 
   # Matches the instance type in a singleton-class context
   def self.attached_class
-    T::Types::AttachedClassType.new
+    T::Types::AttachedClassType::Private::INSTANCE
   end
 
   # Matches any class that subclasses or includes the provided class
@@ -103,7 +105,7 @@ module T
     end
   end
 
-  # References a type paramater which was previously defined with
+  # References a type parameter which was previously defined with
   # `type_parameters`.
   #
   # This is used for generic methods. Example usage:
@@ -282,4 +284,3 @@ module T
     end
   end
 end
-# rubocop:enable PrisonGuard/UseOpusTypesShortcut

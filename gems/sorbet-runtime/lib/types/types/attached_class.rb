@@ -12,7 +12,7 @@ module T::Types
 
     # @override Base
     def name
-      "AttachedClass"
+      "T.attached_class"
     end
 
     # @override Base
@@ -28,6 +28,10 @@ module T::Types
       else
         false
       end
+    end
+
+    module Private
+      INSTANCE = AttachedClassType.new.freeze
     end
   end
 end

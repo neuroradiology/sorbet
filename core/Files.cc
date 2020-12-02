@@ -1,6 +1,7 @@
 #include "core/Files.h"
 #include "core/Context.h"
 #include "core/GlobalState.h"
+#include "core/NameHash.h"
 #include <vector>
 
 #include "absl/strings/match.h"
@@ -98,8 +99,8 @@ StrictLevel File::fileSigil(string_view source) {
 }
 
 File::File(string &&path_, string &&source_, Type sourceType, u4 epoch)
-    : epoch(epoch), sourceType(sourceType), path_(path_), source_(source_), originalSigil(fileSigil(this->source_)),
-      strictLevel(originalSigil) {}
+    : epoch(epoch), sourceType(sourceType), path_(move(path_)), source_(move(source_)),
+      originalSigil(fileSigil(this->source_)), strictLevel(originalSigil) {}
 
 unique_ptr<File> File::deepCopy(GlobalState &gs) const {
     string sourceCopy = source_;
@@ -111,9 +112,20 @@ unique_ptr<File> File::deepCopy(GlobalState &gs) const {
     return ret;
 }
 
-FileRef::FileRef(unsigned int id) : _id(id) {
-    ENFORCE(((u2)id) == id, "FileRef overflow. Do you have 2^16 files?");
+void File::setFileHash(unique_ptr<const FileHash> hash) {
+    // If hash_ != nullptr, then the contents of hash_ and hash should be identical.
+    // Avoid needlessly invalidating references to *hash_.
+    if (hash_ == nullptr) {
+        cached = false;
+        hash_ = move(hash);
+    }
 }
+
+const shared_ptr<const FileHash> &File::getFileHash() const {
+    return hash_;
+}
+
+FileRef::FileRef(unsigned int id) : _id(id) {}
 
 const File &FileRef::data(const GlobalState &gs) const {
     ENFORCE(gs.files[_id]);
@@ -163,6 +175,10 @@ bool File::isRBI() const {
 
 bool File::isStdlib() const {
     return fileSigil(source()) == StrictLevel::Stdlib;
+}
+
+bool File::isPackage() const {
+    return sourceType == File::Type::Package;
 }
 
 vector<int> &File::lineBreaks() const {

@@ -1,34 +1,43 @@
 #include "main/lsp/requests/type_definition.h"
 #include "common/typecase.h"
 #include "core/lsp/QueryResponse.h"
-#include "main/lsp/lsp.h"
+#include "main/lsp/json_types.h"
 
 using namespace std;
 
 namespace sorbet::realmain::lsp {
 
 namespace {
-vector<core::Loc> locsForType(const core::GlobalState &gs, core::TypePtr type) {
+vector<core::Loc> locsForType(const core::GlobalState &gs, const core::TypePtr &type) {
     vector<core::Loc> result;
-    if (type->isUntyped()) {
+    if (type.isUntyped()) {
         return result;
     }
     typecase(
-        type.get(), [&](core::ClassType *t) { result.emplace_back(t->symbol.data(gs)->loc()); },
-        [&](core::AppliedType *t) { result.emplace_back(t->klass.data(gs)->loc()); },
-        [&](core::OrType *t) {
-            for (auto loc : locsForType(gs, t->left)) {
-                result.emplace_back(loc);
-            }
-            for (auto loc : locsForType(gs, t->right)) {
+        type,
+        [&](const core::ClassType &t) {
+            for (auto loc : t.symbol.data(gs)->locs()) {
                 result.emplace_back(loc);
             }
         },
-        [&](core::AndType *t) {
-            for (auto loc : locsForType(gs, t->left)) {
+        [&](const core::AppliedType &t) {
+            for (auto loc : t.klass.data(gs)->locs()) {
                 result.emplace_back(loc);
             }
-            for (auto loc : locsForType(gs, t->right)) {
+        },
+        [&](const core::OrType &t) {
+            for (auto loc : locsForType(gs, t.left)) {
+                result.emplace_back(loc);
+            }
+            for (auto loc : locsForType(gs, t.right)) {
+                result.emplace_back(loc);
+            }
+        },
+        [&](const core::AndType &t) {
+            for (auto loc : locsForType(gs, t.left)) {
+                result.emplace_back(loc);
+            }
+            for (auto loc : locsForType(gs, t.right)) {
                 result.emplace_back(loc);
             }
         });

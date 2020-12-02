@@ -6,7 +6,7 @@
 using namespace std;
 
 namespace sorbet::rbi {
-void polulateRBIsInto(unique_ptr<core::GlobalState> &gs) {
+void populateRBIsInto(unique_ptr<core::GlobalState> &gs) {
     gs->initEmpty();
     gs->ensureCleanStrings = true;
 
@@ -20,7 +20,7 @@ void polulateRBIsInto(unique_ptr<core::GlobalState> &gs) {
         }
     }
     realmain::options::Options emptyOpts;
-    unique_ptr<KeyValueStore> kvstore;
+    unique_ptr<const OwnedKeyValueStore> kvstore;
     auto workers = WorkerPool::create(emptyOpts.threads, gs->tracer());
     auto indexed = realmain::pipeline::index(gs, payloadFiles, emptyOpts, *workers, kvstore);
     realmain::pipeline::resolve(gs, move(indexed), emptyOpts, *workers); // result is thrown away

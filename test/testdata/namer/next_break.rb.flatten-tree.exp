@@ -3,7 +3,7 @@ begin
   class <emptyTree><<C <root>>> < (::<todo sym>)
     def self.<static-init><<static-init>$CENSORED>(<blk>)
       begin
-        <emptyTree>
+        ::<Magic>.<define-top-class-or-module>(::Test)
         ::Sorbet::Private::Static.keep_for_ide(::Test)
         <emptyTree>
       end
@@ -28,7 +28,7 @@ begin
     end
 
     def self.<static-init>(<blk>)
-      ::Sorbet::Private::Static.keep_def(<self>, :"test_next_break")
+      ::Sorbet::Private::Static.keep_def(<self>, :test_next_break)
     end
   end
   <emptyTree>

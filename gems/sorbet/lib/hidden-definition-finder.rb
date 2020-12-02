@@ -109,6 +109,8 @@ class Sorbet::Private::HiddenMethodFinder
         '--stdout-hup-hack',
         '--silence-dev-message',
         '--no-error-count',
+        '-e', # this is additive with any files / dirs
+        '""',
       ],
       err: SOURCE_CONSTANTS_ERR
     )
@@ -226,8 +228,9 @@ class Sorbet::Private::HiddenMethodFinder
     return if !Sorbet::Private::RealStdlib.real_is_a?(my_klass, Class) && !Sorbet::Private::RealStdlib.real_is_a?(my_klass, Module)
 
     # We specifically don't typecheck anything in T:: since it is hardcoded
-    # into sorbet
-    return if real_name(my_klass) == 'T'
+    # into sorbet. We don't include anything in Sorbet::Private:: because
+    # it's private.
+    return if ['T', 'Sorbet::Private'].include?(real_name(my_klass))
 
     source_type = nil
     if !source_entry
@@ -328,9 +331,9 @@ class Sorbet::Private::HiddenMethodFinder
       end
       next if Sorbet::Private::RealStdlib.real_is_a?(my_value, Class) || Sorbet::Private::RealStdlib.real_is_a?(my_value, Module)
       if defined?(T::Types) && Sorbet::Private::RealStdlib.real_is_a?(my_value, T::Types::TypeMember)
-        ret << my_value.variance == :invariant ? "  #{name} = type_member" : "  #{name} = type_member(#{my_value.variance.inspect})"
+        ret << (my_value.variance == :invariant ? "  #{name} = type_member" : "  #{name} = type_member(#{my_value.variance.inspect})")
       elsif defined?(T::Types) && Sorbet::Private::RealStdlib.real_is_a?(my_value, T::Types::TypeTemplate)
-        ret << my_value.variance == :invariant ? "  #{name} = type_template" : "  #{name} = type_template(#{my_value.variance.inspect})"
+        ret << (my_value.variance == :invariant ? "  #{name} = type_template" : "  #{name} = type_template(#{my_value.variance.inspect})")
       else
         ret << "  #{name} = ::T.let(nil, ::T.untyped)"
       end

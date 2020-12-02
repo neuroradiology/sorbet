@@ -2,7 +2,7 @@
 #include "absl/strings/match.h"
 #include "absl/strings/str_replace.h"
 #include "main/lsp/LSPOutput.h"
-#include "main/lsp/lsp.h"
+#include "main/lsp/json_types.h"
 #include "main/lsp/notifications/notifications.h"
 #include "main/lsp/requests/requests.h"
 
@@ -23,6 +23,14 @@ string readFile(string_view path, const FileSystem &fs) {
         return "";
     }
 }
+
+core::File::Type getFileType(string_view path, const options::Options &opts) {
+    if (opts.stripePackages && absl::EndsWith(path, "/__package.rb")) {
+        return core::File::Type::Package;
+    }
+    return core::File::Type::Normal;
+}
+
 } // namespace
 
 LSPPreprocessor::LSPPreprocessor(shared_ptr<LSPConfiguration> config, shared_ptr<absl::Mutex> taskQueueMutex,
@@ -182,6 +190,9 @@ unique_ptr<LSPTask> LSPPreprocessor::getTaskForMessage(LSPMessage &msg) {
                 return make_unique<CompletionTask>(*config, id, move(get<unique_ptr<CompletionParams>>(rawParams)));
             case LSPMethod::TextDocumentCodeAction:
                 return make_unique<CodeActionTask>(*config, id, move(get<unique_ptr<CodeActionParams>>(rawParams)));
+            case LSPMethod::TextDocumentFormatting:
+                return make_unique<DocumentFormattingTask>(*config, id,
+                                                           move(get<unique_ptr<DocumentFormattingParams>>(rawParams)));
             case LSPMethod::TextDocumentSignatureHelp:
                 return make_unique<SignatureHelpTask>(*config, id,
                                                       move(get<unique_ptr<TextDocumentPositionParams>>(rawParams)));
@@ -194,6 +205,13 @@ unique_ptr<LSPTask> LSPPreprocessor::getTaskForMessage(LSPMessage &msg) {
                 return make_unique<ShutdownTask>(*config, id);
             case LSPMethod::SorbetError:
                 return make_unique<SorbetErrorTask>(*config, move(get<unique_ptr<SorbetErrorParams>>(rawParams)), id);
+            case LSPMethod::GETCOUNTERS:
+                return make_unique<GetCountersTask>(*config, id);
+            case LSPMethod::TextDocumentPrepareRename:
+                return make_unique<PrepareRenameTask>(*config, id,
+                                                      move(get<unique_ptr<TextDocumentPositionParams>>(rawParams)));
+            case LSPMethod::TextDocumentRename:
+                return make_unique<RenameTask>(*config, id, move(get<unique_ptr<RenameParams>>(rawParams)));
             default:
                 return make_unique<SorbetErrorTask>(
                     *config,
@@ -264,7 +282,7 @@ void LSPPreprocessor::preprocessAndEnqueue(unique_ptr<LSPMessage> msg) {
     task->latencyTimer = move(msg->latencyTimer);
 
     {
-        Timer timeit(config->logger, "LSPTask::Preprocess");
+        Timer timeit(config->logger, "LSPTask::preprocess");
         timeit.setTag("method", task->methodString());
         task->preprocess(*this);
     }
@@ -293,9 +311,11 @@ LSPPreprocessor::canonicalizeEdits(u4 v, unique_ptr<DidChangeTextDocumentParams>
         string localPath = config->remoteName2Local(uri);
         if (!config->isFileIgnored(localPath)) {
             string fileContents = changeParams->getSource(getFileContents(localPath));
-            auto file = make_shared<core::File>(move(localPath), move(fileContents), core::File::Type::Normal, v);
+            auto fileType = getFileType(localPath, config->opts);
+            auto &slot = openFiles[localPath];
+            auto file = make_shared<core::File>(move(localPath), move(fileContents), fileType, v);
             edit->updates.push_back(file);
-            openFiles[localPath] = move(file);
+            slot = move(file);
         }
     }
     return edit;
@@ -309,10 +329,11 @@ LSPPreprocessor::canonicalizeEdits(u4 v, unique_ptr<DidOpenTextDocumentParams> o
     if (config->isUriInWorkspace(uri)) {
         string localPath = config->remoteName2Local(uri);
         if (!config->isFileIgnored(localPath)) {
-            auto file = make_shared<core::File>(move(localPath), move(openParams->textDocument->text),
-                                                core::File::Type::Normal, v);
+            auto fileType = getFileType(localPath, config->opts);
+            auto &slot = openFiles[localPath];
+            auto file = make_shared<core::File>(move(localPath), move(openParams->textDocument->text), fileType, v);
             edit->updates.push_back(file);
-            openFiles[localPath] = move(file);
+            slot = move(file);
         }
     }
     return edit;
@@ -328,8 +349,9 @@ LSPPreprocessor::canonicalizeEdits(u4 v, unique_ptr<DidCloseTextDocumentParams> 
         if (!config->isFileIgnored(localPath)) {
             openFiles.erase(localPath);
             // Use contents of file on disk.
-            edit->updates.push_back(make_shared<core::File>(move(localPath), readFile(localPath, *config->opts.fs),
-                                                            core::File::Type::Normal, v));
+            auto fileType = getFileType(localPath, config->opts);
+            auto fileContents = readFile(localPath, *config->opts.fs);
+            edit->updates.push_back(make_shared<core::File>(move(localPath), move(fileContents), fileType, v));
         }
     }
     return edit;
@@ -339,13 +361,14 @@ unique_ptr<SorbetWorkspaceEditParams>
 LSPPreprocessor::canonicalizeEdits(u4 v, unique_ptr<WatchmanQueryResponse> queryResponse) const {
     auto edit = make_unique<SorbetWorkspaceEditParams>();
     edit->epoch = v;
-    for (auto file : queryResponse->files) {
+    for (auto &file : queryResponse->files) {
         // Don't append rootPath if it is empty.
         string localPath = !config->rootPath.empty() ? absl::StrCat(config->rootPath, "/", file) : file;
         // Editor contents supercede file system updates.
         if (!config->isFileIgnored(localPath) && !openFiles.contains(localPath)) {
-            edit->updates.push_back(make_shared<core::File>(move(localPath), readFile(localPath, *config->opts.fs),
-                                                            core::File::Type::Normal, v));
+            auto fileType = getFileType(localPath, config->opts);
+            auto fileContents = readFile(localPath, *config->opts.fs);
+            edit->updates.push_back(make_shared<core::File>(move(localPath), move(fileContents), fileType, v));
         }
     }
     return edit;

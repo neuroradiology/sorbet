@@ -1,38 +1,17 @@
 # The minimal portion of our Chalk::ODM support
 # typed: __STDLIB_INTERNAL
 
-class Chalk::ODM::Mutator
-end
-
-class Chalk::ODM::Mutator::Private::HashMutator
-  extend T::Generic
-
-  K = type_member
-  V = type_member
-
-  sig {params(key: K, value: V).void}
-  def []=(key, value)
-  end
-end
-
-class Chalk::ODM::Mutator::Private::ArrayMutator
-  extend T::Generic
-
-  Elem = type_member
-
-  sig {params(value: Elem).void}
-  def <<(value)
-  end
-
-  sig {params(key: Integer, value: Elem).void}
-  def []=(key, value)
-  end
-end
-
-class Chalk::ODM::Mutator::Private::DocumentMutator
-end
-
 class Chalk::ODM::Document
+  include T::Props
+  include T::Props::Serializable
+  include T::Props::WeakConstructor
+  extend T::Helpers
+  abstract!
+end
+
+module Chalk::ODM::DocumentDecoratorHelper
+  def self.soft_freeze_logic(instance, prop)
+  end
 end
 
 class Opus::DB::Model::Mixins::Encryptable::EncryptedValue < Chalk::ODM::Document

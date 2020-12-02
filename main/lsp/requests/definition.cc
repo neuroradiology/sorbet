@@ -1,6 +1,6 @@
 #include "main/lsp/requests/definition.h"
 #include "core/lsp/QueryResponse.h"
-#include "main/lsp/lsp.h"
+#include "main/lsp/json_types.h"
 
 using namespace std;
 
@@ -26,18 +26,26 @@ unique_ptr<ResponseMessage> DefinitionTask::runRequest(LSPTypecheckerDelegate &t
             auto resp = move(queryResponses[0]);
 
             // Only support go-to-definition on constants and fields in untyped files.
-            if (resp->isConstant() || resp->isField() || (fileIsTyped && (resp->isIdent() || resp->isLiteral()))) {
+            if (auto c = resp->isConstant()) {
+                auto sym = c->symbol;
+                for (auto loc : sym.data(gs)->locs()) {
+                    addLocIfExists(gs, result, loc);
+                }
+            } else if (resp->isField() || (fileIsTyped && (resp->isIdent() || resp->isLiteral()))) {
                 auto retType = resp->getTypeAndOrigins();
                 for (auto &originLoc : retType.origins) {
                     addLocIfExists(gs, result, originLoc);
                 }
             } else if (fileIsTyped && resp->isDefinition()) {
-                addLocIfExists(gs, result, resp->isDefinition()->termLoc);
+                auto sym = resp->isDefinition()->symbol;
+                for (auto loc : sym.data(gs)->locs()) {
+                    addLocIfExists(gs, result, loc);
+                }
             } else if (fileIsTyped && resp->isSend()) {
                 auto sendResp = resp->isSend();
                 auto start = sendResp->dispatchResult.get();
                 while (start != nullptr) {
-                    if (start->main.method.exists() && !start->main.receiver->isUntyped()) {
+                    if (start->main.method.exists() && !start->main.receiver.isUntyped()) {
                         addLocIfExists(gs, result, start->main.method.data(gs)->loc());
                     }
                     start = start->secondary.get();

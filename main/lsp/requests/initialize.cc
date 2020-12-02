@@ -1,4 +1,5 @@
 #include "main/lsp/requests/initialize.h"
+#include "main/lsp/json_types.h"
 
 using namespace std;
 
@@ -26,17 +27,20 @@ unique_ptr<ResponseMessage> InitializeTask::runRequest(LSPTypecheckerDelegate &t
     serverCap->documentHighlightProvider = opts.lspDocumentHighlightEnabled;
     serverCap->hoverProvider = true;
     serverCap->referencesProvider = true;
+    serverCap->documentFormattingProvider = rubyfmt_enabled && opts.lspDocumentFormatRubyfmtEnabled;
 
-    if (opts.lspQuickFixEnabled) {
-        auto codeActionProvider = make_unique<CodeActionOptions>();
-        codeActionProvider->codeActionKinds = {CodeActionKind::Quickfix};
-        serverCap->codeActionProvider = move(codeActionProvider);
-    }
+    auto codeActionProvider = make_unique<CodeActionOptions>();
+    codeActionProvider->codeActionKinds = {CodeActionKind::Quickfix, CodeActionKind::SourceFixAllSorbet};
+    serverCap->codeActionProvider = move(codeActionProvider);
 
     if (opts.lspSignatureHelpEnabled) {
         auto sigHelpProvider = make_unique<SignatureHelpOptions>();
         sigHelpProvider->triggerCharacters = {"(", ","};
         serverCap->signatureHelpProvider = move(sigHelpProvider);
+    }
+
+    if (opts.lspRenameEnabled) {
+        serverCap->renameProvider = make_unique<RenameOptions>(true);
     }
 
     auto completionProvider = make_unique<CompletionOptions>();

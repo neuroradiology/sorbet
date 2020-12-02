@@ -21,15 +21,15 @@ module T::Utils
     elsif val == ::Range
       T::Range[T.untyped]
     elsif val.is_a?(Module)
-      T::Types::Simple.new(val) # rubocop:disable PrisonGuard/UseOpusTypesShortcut
+      T::Types::Simple::Private::Pool.type_for_module(val)
     elsif val.is_a?(::Array)
-      T::Types::FixedArray.new(val) # rubocop:disable PrisonGuard/UseOpusTypesShortcut
+      T::Types::FixedArray.new(val)
     elsif val.is_a?(::Hash)
-      T::Types::FixedHash.new(val) # rubocop:disable PrisonGuard/UseOpusTypesShortcut
+      T::Types::FixedHash.new(val)
     elsif val.is_a?(T::Private::Methods::DeclBuilder)
       T::Private::Methods.finalize_proc(val.decl)
     elsif val.is_a?(::T::Enum)
-      T::Types::TEnum.new(val) # rubocop:disable PrisonGuard/UseOpusTypesShortcut
+      T::Types::TEnum.new(val)
     elsif val.is_a?(::String)
       raise "Invalid String literal for type constraint. Must be an #{T::Types::Base}, a " \
             "class/module, or an array. Got a String with value `#{val}`."
@@ -109,10 +109,10 @@ module T::Utils
 
   # Returns the arity of a method, unwrapping the sig if needed
   def self.arity(method)
-    arity = method.arity # rubocop:disable PrisonGuard/NoArity
+    arity = method.arity
     return arity if arity != -1 || method.is_a?(Proc)
     sig = T::Private::Methods.signature_for_method(method)
-    sig ? sig.method.arity : arity # rubocop:disable PrisonGuard/NoArity
+    sig ? sig.method.arity : arity
   end
 
   # Elide the middle of a string as needed and replace it with an ellipsis.
@@ -151,6 +151,21 @@ module T::Utils
     "#{start_part}#{ellipsis}#{end_part}"
   end
 
+  def self.lift_enum(enum)
+    unless enum.is_a?(T::Types::Enum)
+      raise ArgumentError.new("#{enum.inspect} is not a T.enum")
+    end
+
+    classes = enum.values.map(&:class).uniq
+    if classes.empty?
+      T.untyped
+    elsif classes.length > 1
+      T::Types::Union.new(classes)
+    else
+      T::Types::Simple::Private::Pool.type_for_module(classes.first)
+    end
+  end
+
   module Nilable
     # :is_union_type, T::Boolean: whether the type is an T::Types::Union type
     # :non_nilable_type, Class: if it is an T.nilable type, the corresponding underlying type; otherwise, nil.
@@ -161,7 +176,7 @@ module T::Utils
     def self.get_type_info(prop_type)
       if prop_type.is_a?(T::Types::Union)
         non_nilable_type = T::Utils.unwrap_nilable(prop_type)
-        if non_nilable_type && non_nilable_type.is_a?(T::Types::Simple)
+        if non_nilable_type&.is_a?(T::Types::Simple)
           non_nilable_type = non_nilable_type.raw_type
         end
         TypeInfo.new(true, non_nilable_type)

@@ -7,6 +7,8 @@
 #include <numeric> // accumulate
 
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/str_split.h"
 
 using namespace std;
 
@@ -73,9 +75,6 @@ string Name::showRaw(const GlobalState &gs) const {
                 case UniqueNameKind::TEnum:
                     kind = "E";
                     break;
-                case UniqueNameKind::DefaultArg:
-                    kind = "DA";
-                    break;
             }
             if (gs.censorForSnapshotTests && this->unique.uniqueNameKind == UniqueNameKind::Namer &&
                 this->unique.original == core::Names::staticInit()) {
@@ -98,8 +97,6 @@ string Name::toString(const GlobalState &gs) const {
                 return fmt::format("<Class:{}>", this->unique.original.data(gs)->show(gs));
             } else if (this->unique.uniqueNameKind == UniqueNameKind::Overload) {
                 return absl::StrCat(this->unique.original.data(gs)->show(gs), " (overload.", this->unique.num, ")");
-            } else if (this->unique.uniqueNameKind == UniqueNameKind::DefaultArg) {
-                return fmt::format("{}<defaultArg>{}", this->unique.original.data(gs)->show(gs), this->unique.num);
             }
             if (gs.censorForSnapshotTests && this->unique.uniqueNameKind == UniqueNameKind::Namer &&
                 this->unique.original == core::Names::staticInit()) {
@@ -127,8 +124,6 @@ string Name::show(const GlobalState &gs) const {
                 // The entire goal of UniqueNameKind::TEnum is to have Name::show print the name as if on the
                 // original name, so that our T::Enum DSL-synthesized class names are kept as an implementation detail.
                 // Thus, we fall through.
-            } else if (this->unique.uniqueNameKind == UniqueNameKind::DefaultArg) {
-                return fmt::format("{}<defaultArg>{}", this->unique.original.data(gs)->show(gs), this->unique.num);
             }
             return this->unique.original.data(gs)->show(gs);
         case NameKind::CONSTANT:
@@ -153,21 +148,21 @@ void Name::sanityCheck(const GlobalState &gs) const {
     NameRef current = this->ref(gs);
     switch (this->kind) {
         case NameKind::UTF8:
-            ENFORCE(current == const_cast<GlobalState &>(gs).enterNameUTF8(this->raw.utf8),
-                    "Name table corrupted, re-entering UTF8 name gives different id");
+            ENFORCE_NO_TIMER(current == const_cast<GlobalState &>(gs).enterNameUTF8(this->raw.utf8),
+                             "Name table corrupted, re-entering UTF8 name gives different id");
             break;
         case NameKind::UNIQUE: {
-            ENFORCE(this->unique.original._id < current._id, "unique name id not bigger than original");
-            ENFORCE(this->unique.num > 0, "unique num == 0");
+            ENFORCE_NO_TIMER(this->unique.original._id < current._id, "unique name id not bigger than original");
+            ENFORCE_NO_TIMER(this->unique.num > 0, "unique num == 0");
             NameRef current2 = const_cast<GlobalState &>(gs).freshNameUnique(this->unique.uniqueNameKind,
                                                                              this->unique.original, this->unique.num);
-            ENFORCE(current == current2, "Name table corrupted, re-entering UNIQUE name gives different id");
+            ENFORCE_NO_TIMER(current == current2, "Name table corrupted, re-entering UNIQUE name gives different id");
             break;
         }
         case NameKind::CONSTANT:
-            ENFORCE(this->cnst.original._id < current._id, "constant name id not bigger than original");
-            ENFORCE(current == const_cast<GlobalState &>(gs).enterNameConstant(this->cnst.original),
-                    "Name table corrupted, re-entering CONSTANT name gives different id");
+            ENFORCE_NO_TIMER(this->cnst.original._id < current._id, "constant name id not bigger than original");
+            ENFORCE_NO_TIMER(current == const_cast<GlobalState &>(gs).enterNameConstant(this->cnst.original),
+                             "Name table corrupted, re-entering CONSTANT name gives different id");
             break;
     }
 }
@@ -194,6 +189,15 @@ bool Name::isClassName(const GlobalState &gs) const {
                          this->cnst.original.data(gs)->unique.uniqueNameKind == UniqueNameKind::TEnum));
             return true;
     }
+}
+
+bool Name::isTEnumName(const GlobalState &gs) const {
+    if (this->kind != NameKind::CONSTANT) {
+        return false;
+    }
+    auto original = this->cnst.original;
+    return original.data(gs)->kind == NameKind::UNIQUE &&
+           original.data(gs)->unique.uniqueNameKind == UniqueNameKind::TEnum;
 }
 
 NameRefDebugCheck::NameRefDebugCheck(const GlobalState &gs, int _id) {
@@ -246,7 +250,7 @@ NameData NameRef::data(GlobalState &gs) const {
 }
 
 const NameData NameRef::data(const GlobalState &gs) const {
-    ENFORCE(_id < gs.names.size(), "name id out of bounds");
+    ENFORCE(_id < gs.names.size(), "name {} id out of bounds {}", _id, gs.names.size());
     ENFORCE(exists(), "non existing name");
     enforceCorrectGlobalState(gs);
     return NameData(const_cast<Name &>(gs.names[_id]), gs);
@@ -287,6 +291,14 @@ NameRef NameRef::prepend(GlobalState &gs, string_view s) const {
     ENFORCE(name->kind == NameKind::UTF8, "prepend over non-utf8 name");
     string nameEq = absl::StrCat(s, name->raw.utf8);
     return gs.enterNameUTF8(nameEq);
+}
+
+NameRef NameRef::lookupMangledPackageName(const GlobalState &gs) const {
+    auto name = this->data(gs);
+    ENFORCE(name->kind == NameKind::UTF8, "manglePackageName over non-utf8 name");
+    auto parts = absl::StrSplit(name->raw.utf8, "::");
+    string nameEq = absl::StrCat(absl::StrJoin(parts, "_"), "_Package");
+    return gs.lookupNameConstant(nameEq);
 }
 
 Name Name::deepCopy(const GlobalState &to) const {

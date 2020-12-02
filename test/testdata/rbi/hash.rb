@@ -29,6 +29,7 @@ T.assert_type!(
 )
 
 {a: 1}.merge({b: 2}, {c: 3})
+{a: 1}.merge!({b: 2}, {c: 3})
 
 
 h1 = T::Hash[Integer, String].new
@@ -51,3 +52,48 @@ end
 h3[2] = "foo"
 h3[nil] = "foo" # error: Expected `Integer` but found `NilClass` for argument `arg0`
 h3[3] = nil # error: Expected `String` but found `NilClass` for argument `arg1`
+
+initial_hash = T.let({ a: 1.0, b: 3.0 }, T::Hash[Symbol, Float])
+hash_to_h_1 = initial_hash.to_h
+T.assert_type!(hash_to_h_1, T::Hash[Symbol, Float])
+hash_to_h_2 = initial_hash.to_h { |k, v| [k.to_s, v.to_d] }
+T.assert_type!(hash_to_h_2, T::Hash[String, BigDecimal])
+
+transformed_keys_hash = initial_hash.transform_keys(&:to_s)
+T.assert_type!(transformed_keys_hash, T::Hash[String, Float])
+initial_hash.transform_keys.with_index do |k, i|
+  T.assert_type!(k, Symbol)
+  T.assert_type!(i, Integer)
+end
+
+transformed_keys_bang_hash = initial_hash.dup.transform_keys!(&:to_s)
+T.assert_type!(transformed_keys_bang_hash, T::Hash[String, Float])
+initial_hash.transform_keys!.with_index do |k, i|
+  T.assert_type!(k, Symbol)
+  T.assert_type!(i, Integer)
+end
+
+transformed_values_hash = initial_hash.transform_values(&:to_s)
+T.assert_type!(transformed_values_hash, T::Hash[Symbol, String])
+initial_hash.transform_values(&:size) # error: Method `size` does not exist on `Float`
+initial_hash.transform_values.with_index do |v, i|
+  T.assert_type!(v, Float)
+  T.assert_type!(i, Integer)
+end
+
+transformed_values_bang_hash = initial_hash.dup.transform_values!(&:to_s)
+T.assert_type!(transformed_values_bang_hash, T::Hash[Symbol, String])
+initial_hash.transform_values!.with_index do |v, i|
+  T.assert_type!(v, Float)
+  T.assert_type!(i, Integer)
+end
+
+T.assert_type!({}.any?, T::Boolean)
+T.reveal_type(T::Hash[Symbol, Integer].new.any? do |key, value| # error: Revealed type: `T::Boolean`
+  T.reveal_type(key) # error: Revealed type: `Symbol`
+  T.reveal_type(value) # error: Revealed type: `Integer`
+end)
+T.reveal_type(T::Hash[Symbol, Integer].new.any? do |(key, value)| # error: Revealed type: `T::Boolean`
+  T.reveal_type(key) # error: Revealed type: `Symbol`
+  T.reveal_type(value) # error: Revealed type: `Integer`
+end)

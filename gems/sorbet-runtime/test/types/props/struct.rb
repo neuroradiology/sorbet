@@ -51,6 +51,19 @@ class Opus::Types::Test::Props::StructTest < Critic::Unit::UnitTest
       StructWithPredefinedHash.new(hash_field1: {a: 100, b: 200}, hash_field2: {a: 'foo', b: 200})
     end
   end
+
+  it 'uses the original value when value is invalid in a soft error environment' do
+    T::Configuration.call_validation_error_handler = proc do
+      # no raise
+    end
+
+    hash_field1 = {a: 'foo', b: 200}
+    doc = StructWithPredefinedHash.new(hash_field1: hash_field1)
+    assert_equal('foo', doc.hash_field1[:a])
+  ensure
+    T::Configuration.call_validation_error_handler = nil
+  end
+
   it 'can initialize a struct with a prop named "class" if without_accessors is true' do
     doc = StructWithClassProp.new(class: "the_class")
     assert_equal(StructWithClassProp, doc.class)
@@ -106,10 +119,10 @@ class Opus::Types::Test::Props::StructTest < Critic::Unit::UnitTest
     it 'tstruct tnilable field type_object' do
       c = Class.new(T::Struct) do
         prop :foo, T.nilable(String)
-        prop :wday, T.nilable(String), enum: ['mon', 'tue']
+        prop :wday, T.nilable(String), enum: %w[mon tue]
       end
       assert_equal(T.nilable(String), c.props[:foo][:type_object])
-      assert_equal(T.nilable(T.enum(['mon', 'tue'])), c.props[:wday][:type_object])
+      assert_equal(T.nilable(T.all(String, T.enum(%w[mon tue]))), c.props[:wday][:type_object])
     end
 
     it 'tstruct deserialize optional fields' do

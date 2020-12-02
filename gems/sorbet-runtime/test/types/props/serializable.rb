@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 require_relative '../../test_helper'
 
+require 'parser/current'
+
 class Opus::Types::Test::Props::SerializableTest < Critic::Unit::UnitTest
   def assert_prop_error(match, &blk)
     ex = assert_raises(ArgumentError) do
@@ -120,9 +122,84 @@ class Opus::Types::Test::Props::SerializableTest < Critic::Unit::UnitTest
       assert_equal(m.serialize, m.class.from_hash(m.serialize).serialize)
     end
 
+    it 'round-trips extra props' do
+      m = a_serializable
+      input = m.serialize.merge('not_a_prop' => 'foo')
+      assert_equal('foo', m.class.from_hash(input).serialize['not_a_prop'])
+    end
+
     it 'does not call the constructor' do
       MySerializable.any_instance.expects(:new).never
       MySerializable.from_hash({})
+    end
+  end
+
+  describe 'error message' do
+    it 'is only soft-assert by default for prop deserialize error' do
+      msg_string = nil
+      extra_hash = nil
+      T::Configuration.soft_assert_handler = proc do |msg, extra|
+        msg_string = msg
+        extra_hash = extra
+      end
+
+      result = MySerializable.from_hash({'foo' => "Won't respond like hash"})
+      assert_equal("Won't respond like hash", result.foo)
+
+      refute_nil(msg_string)
+      refute_nil(extra_hash)
+      storytime = extra_hash[:storytime]
+      assert_equal(MySerializable, storytime[:klass])
+      assert_equal(:foo, storytime[:prop])
+      assert_equal("Won't respond like hash", storytime[:value])
+    end
+
+    it 'includes relevant generated code on deserialize when we raise' do
+      T::Configuration.soft_assert_handler = proc do |msg, extra|
+        raise "#{msg} #{extra.inspect}"
+      end
+
+      e = assert_raises(RuntimeError) do
+        MySerializable.from_hash({'foo' => "Won't respond like hash"})
+      end
+
+      assert_includes(e.message, "undefined method `transform_values'")
+      assert_includes(e.message, "foo")
+      assert_includes(e.message, "val.transform_values {|v| T::Props::Utils.deep_clone_object(v)}")
+    end
+
+    it 'includes relevant generated code on serialize' do
+      m = a_serializable
+      m.instance_variable_set(:@foo, "Won't respond like hash")
+      e = assert_raises(NoMethodError) do
+        m.serialize
+      end
+
+      assert_includes(e.message, "undefined method `transform_values'")
+      assert_includes(e.message, 'h["foo"] = @foo.transform_values {|v| T::Props::Utils.deep_clone_object(v)}')
+    end
+  end
+
+  class HasUnstoredProp < T::Struct
+    prop :stored, String
+    prop :not_stored, String, dont_store: true
+  end
+
+  describe 'dont_store prop' do
+    it 'is not stored' do
+      m = HasUnstoredProp.new(stored: 'foo', not_stored: 'bar')
+      assert_equal({'stored' => 'foo'}, m.serialize)
+    end
+
+    it 'does not prevent extra_props from round-tripping' do
+      input = {'stored' => 'foo', 'not_a_prop' => 'bar'}
+      result = HasUnstoredProp.from_hash(input).serialize
+      assert_equal('bar', result['not_a_prop'])
+    end
+
+    it 'is allowed even on strict deserialize' do
+      input = {'stored' => 'foo', 'not_stored' => 'bar'}
+      refute_nil(HasUnstoredProp.from_hash!(input))
     end
   end
 
@@ -232,7 +309,7 @@ class Opus::Types::Test::Props::SerializableTest < Critic::Unit::UnitTest
 
     it 'throws exception on nil serialize' do
       foo = NilFieldStruct.allocate
-      ex = assert_raises(T::Props::InvalidValueError) do
+      ex = assert_raises(TypeError) do
         foo.serialize
       end
       assert_includes(ex.message, 'Opus::Types::Test::Props::SerializableTest::NilFieldStruct.foo not set for non-optional prop')
@@ -261,7 +338,7 @@ class Opus::Types::Test::Props::SerializableTest < Critic::Unit::UnitTest
 
       it 'throws exception on nil serialize' do
         struct = NilFieldWeakConstructor.new
-        assert_raises(T::Props::InvalidValueError) do
+        assert_raises(TypeError) do
           struct.serialize
         end
       end
@@ -287,7 +364,7 @@ class Opus::Types::Test::Props::SerializableTest < Critic::Unit::UnitTest
 
       it 'throws exception on nil serialize' do
         struct = NilDefaultStruct.new
-        assert_raises(T::Props::InvalidValueError) do
+        assert_raises(TypeError) do
           struct.serialize
         end
       end
@@ -352,19 +429,60 @@ class Opus::Types::Test::Props::SerializableTest < Critic::Unit::UnitTest
     end
   end
 
+  class BooleanStruct < T::Struct
+    prop :prop, T::Boolean
+    prop :nilable_prop, T.nilable(T::Boolean)
+  end
+
+  describe 'boolean props' do
+    it 'are not cloned on serde' do
+      T::Props::Utils.expects(:deep_clone_object).never
+
+      s = BooleanStruct.new(prop: true)
+      assert_equal(true, BooleanStruct.from_hash(s.serialize).prop)
+    end
+  end
+
+  class HeterogenousUnionStruct < T::Struct
+    prop :prop, T.any(String, MySerializable)
+  end
+
+  describe 'heterogenous union props' do
+    it 'are cloned on serde' do
+      T::Props::Utils.expects(:deep_clone_object).with('foo').at_least_once.returns('foo')
+
+      s = HeterogenousUnionStruct.new(prop: 'foo')
+      assert_equal('foo', HeterogenousUnionStruct.from_hash(s.serialize).prop)
+    end
+  end
+
+  class MultipleStructUnionStruct < T::Struct
+    prop :prop, T.any(MySerializable, MyNilableSerializable)
+  end
+
+  describe 'unions of two different serializables' do
+    it 'are just cloned on serde' do
+      obj = MyNilableSerializable.new
+      T::Props::Utils.expects(:deep_clone_object).with(obj).at_least_once.returns(obj)
+
+      s = MultipleStructUnionStruct.new(prop: obj)
+      assert_equal(obj, MultipleStructUnionStruct.from_hash(s.serialize).prop)
+    end
+  end
+
   class CustomType
     extend T::Props::CustomType
 
-    def self.instance?(value)
-      value.is_a?(String)
-    end
+    attr_accessor :value
 
     def self.deserialize(value)
-      value.clone.freeze
+      result = new
+      result.value = value.clone.freeze
+      result
     end
 
     def self.serialize(instance)
-      instance
+      instance.value
     end
   end
 
@@ -407,12 +525,33 @@ class Opus::Types::Test::Props::SerializableTest < Critic::Unit::UnitTest
 
   class EnumStruct < T::Struct
     prop :enum, MyEnum
+    prop :enum_of_enums, T.nilable(T.enum([MyEnum::BAR]))
+  end
+
+  class RedundantEnumStruct < T::Struct
+    prop :enum, T.all(MyEnum, T.enum(MyEnum.values))
   end
 
   describe 'enum' do
     it 'round trips' do
-      s = EnumStruct.new(enum: MyEnum::FOO)
-      assert_equal(MyEnum::FOO, EnumStruct.from_hash(s.serialize).enum)
+      s = EnumStruct.new(enum: MyEnum::FOO, enum_of_enums: MyEnum::BAR)
+
+      serialized = s.serialize
+      assert_equal('foo', serialized['enum'])
+      assert_equal('bar', serialized['enum_of_enums'])
+
+      roundtripped = EnumStruct.from_hash(serialized)
+      assert_equal(MyEnum::FOO, roundtripped.enum)
+      assert_equal(MyEnum::BAR, roundtripped.enum_of_enums)
+    end
+
+    it 'does not break during serde when used redundantly with legacy T.enum' do
+      s = RedundantEnumStruct.new(enum: MyEnum::FOO)
+      serialized = s.serialize
+      assert_equal('foo', serialized['enum'])
+
+      roundtripped = RedundantEnumStruct.from_hash(serialized)
+      assert_equal(MyEnum::FOO, roundtripped.enum)
     end
   end
 
@@ -514,5 +653,179 @@ class Opus::Types::Test::Props::SerializableTest < Critic::Unit::UnitTest
       assert_equal({'something_custom' => 'foo'}, hash)
       assert_equal('foo', CustomSerializedForm.from_hash(hash).prop)
     end
+  end
+
+  class ArrayOfNilableStruct < T::Struct
+    prop :prop, T::Array[T.nilable(MyEnum)]
+  end
+
+  describe 'with array of nilable enums' do
+    it 'can deserialize non-nil' do
+      assert_equal([MyEnum::FOO], ArrayOfNilableStruct.from_hash('prop' => ['foo']).prop)
+    end
+
+    it 'can deserialize nil' do
+      assert_equal([nil], ArrayOfNilableStruct.from_hash('prop' => [nil]).prop)
+    end
+  end
+
+  class ModulePropStruct < T::Struct
+    module NonScalar
+    end
+
+    class ConcreteNonScalar
+      include NonScalar
+    end
+
+    module Scalar
+    end
+
+    class ConcreteScalar
+      include Scalar
+    end
+
+    prop :nonscalar, T.nilable(NonScalar)
+    prop :scalar, T.nilable(Scalar)
+  end
+
+  describe 'with a module prop type' do
+    before do
+      T::Configuration.scalar_types += [ModulePropStruct::Scalar.name]
+    end
+
+    after do
+      T::Configuration.scalar_types = nil
+    end
+
+    it 'is cloned on serde by default' do
+      val = ModulePropStruct::ConcreteNonScalar.new
+      T::Props::Utils.expects(:deep_clone_object).with(val).returns(val).at_least_once
+
+      s = ModulePropStruct.new(nonscalar: val)
+      assert_equal(val, ModulePropStruct.from_hash(s.serialize).nonscalar)
+    end
+
+    it 'is not cloned on serde if set as scalar' do
+      val = ModulePropStruct::ConcreteScalar.new
+      T::Props::Utils.expects(:deep_clone_object).never
+
+      s = ModulePropStruct.new(scalar: val)
+      assert_equal(val, ModulePropStruct.from_hash(s.serialize).scalar)
+    end
+  end
+
+  class ComplexStruct < T::Struct
+    prop :primitive, Integer
+    prop :nilable, T.nilable(Integer)
+    prop :nilable_on_read, T.nilable(Integer), raise_on_nil_write: true
+    prop :primitive_default, Integer, default: 0
+    prop :primitive_nilable_default, T.nilable(Integer), default: 0
+    prop :factory, Integer, factory: -> {0}
+    prop :primitive_array, T::Array[Integer]
+    prop :array_default, T::Array[Integer], default: []
+    prop :primitive_hash, T::Hash[String, Integer]
+    prop :array_of_nilable, T::Array[T.nilable(Integer)]
+    prop :nilable_array, T.nilable(T::Array[Integer])
+    prop :substruct, MySerializable
+    prop :nilable_substract, T.nilable(MySerializable)
+    prop :default_substruct, MySerializable, default: MySerializable.new
+    prop :array_of_substruct, T::Array[MySerializable]
+    prop :hash_of_substruct, T::Hash[String, MySerializable]
+    prop :custom_type, CustomType
+    prop :nilable_custom_type, T.nilable(CustomType)
+    prop :default_custom_type, CustomType, default: CustomType.new
+    prop :array_of_custom_type, T::Array[CustomType]
+    prop :hash_of_custom_type_to_substruct, T::Hash[CustomType, MySerializable]
+    prop :unidentified_type, Object
+    prop :nilable_unidentified_type, T.nilable(Object)
+    prop :array_of_unidentified_type, T::Array[Object]
+    prop :defaulted_unidentified_type, Object, default: Object.new
+    prop :hash_with_unidentified_types, T::Hash[Object, Object]
+    prop :infinity_float, Float, default: Float::INFINITY
+  end
+
+  describe 'generated code' do
+    describe 'serialize' do
+      it 'validates' do
+        src = ComplexStruct.decorator.send(:generate_serialize_source).to_s
+        T::Props::GeneratedCodeValidation.validate_serialize(src)
+      end
+
+      it 'has meaningful validation which complains at lurky method invocation' do
+        src = ComplexStruct.decorator.send(:generate_serialize_source).to_s
+        src = src.sub(/\.transform_values\b/, '.something_suspicious')
+        assert_raises(T::Props::GeneratedCodeValidation::ValidationError) do
+          T::Props::GeneratedCodeValidation.validate_serialize(src)
+        end
+      end
+    end
+
+    describe 'deserialize' do
+      it 'validates' do
+        src = ComplexStruct.decorator.send(:generate_deserialize_source).to_s
+        T::Props::GeneratedCodeValidation.validate_deserialize(src)
+      end
+
+      it 'has meaningful validation which complains at lurky method invocation' do
+        src = ComplexStruct.decorator.send(:generate_deserialize_source).to_s
+        src = src.sub(/\.default\b/, '.something_suspicious')
+        assert_raises(T::Props::GeneratedCodeValidation::ValidationError) do
+          T::Props::GeneratedCodeValidation.validate_deserialize(src)
+        end
+      end
+    end
+
+    describe 'disabling evaluation' do
+      it 'works' do
+        T::Props::HasLazilySpecializedMethods.disable_lazy_evaluation!
+
+        m = Class.new do
+          include T::Props::Serializable
+
+          prop :foo, T.nilable(String)
+        end
+
+        assert_raises(T::Props::HasLazilySpecializedMethods::SourceEvaluationDisabled) do
+          m.new.serialize
+        end
+
+        # Explicit call is still ok
+        m.decorator.eagerly_define_lazy_methods!
+      end
+
+      after do
+        T::Props::HasLazilySpecializedMethods.remove_instance_variable(:@lazy_evaluation_disabled)
+      end
+    end
+  end
+
+  class StructWithFloat < T::Struct
+    const :my_float, Float
+  end
+
+  it "coerces raw values to Float if the prop's type is Float" do
+    swf1 = StructWithFloat.new(my_float: 1.0)
+
+    serialized_hash = swf1.serialize
+    # Ruby happens to serialize Float's with a `.0`, but JSON doesn't
+    # distinguish number types, so it's equally fine to omit it, and the
+    # process of serializing and deserializing is free to drop that
+    # information.
+    #
+    # To get Ruby to omit it, we change it to an Integer before calling `.to_json`
+    serialized_hash['my_float'] = 1
+    json = serialized_hash.to_json
+
+    assert_equal('{"my_float":1}', json)
+
+    deserialized_hash = JSON.load(json)
+
+    assert_instance_of(Integer, deserialized_hash['my_float'])
+    assert_equal(1, deserialized_hash['my_float'])
+
+    swf2 = StructWithFloat.from_hash(deserialized_hash)
+
+    assert_instance_of(Float, swf2.my_float)
+    assert_in_delta(1.0, swf2.my_float, 0.0001)
   end
 end

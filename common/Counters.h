@@ -1,8 +1,9 @@
 #ifndef SORBET_COUNTERS_H
 #define SORBET_COUNTERS_H
+#include "absl/container/flat_hash_map.h"
 #include "common/ConstExprStr.h"
-#include "common/common.h"
-#include <chrono>
+#include "sorbet_version/sorbet_version.h"
+#include "spdlog/spdlog.h"
 #include <string>
 
 namespace sorbet {
@@ -40,6 +41,17 @@ class Proto;
 namespace web_tracer_framework {
 class Tracing;
 }
+
+namespace test::lsp {
+class CounterStateDatabase;
+}
+
+// We are explicitly not using <chrono> in this file, because we profiled it and realized that
+// using its abstractions for computing on and gathering times were a substantial overhead.
+struct microseconds {
+    int64_t usec;
+};
+
 struct CounterState {
     CounterState();
     ~CounterState();
@@ -57,13 +69,10 @@ private:
     friend class core::Proto;
     friend class StatsD;
     friend class sorbet::web_tracer_framework::Tracing;
+    friend class sorbet::test::lsp::CounterStateDatabase;
 
     CounterState(std::unique_ptr<CounterImpl> counters);
     std::unique_ptr<CounterImpl> counters;
-};
-
-struct Counters {
-    static const std::vector<std::string> ALL_COUNTERS;
 };
 
 CounterState getAndClearThreadCounters();
@@ -87,14 +96,13 @@ struct FlowId {
     int id;
 };
 
-void timingAdd(ConstExprStr measure, std::chrono::time_point<std::chrono::steady_clock> start,
-               std::chrono::time_point<std::chrono::steady_clock> end,
-               std::vector<std::pair<ConstExprStr, std::string>> args,
-               std::vector<std::pair<ConstExprStr, ConstExprStr>> tags, FlowId self, FlowId previous,
-               std::vector<int> histogramBuckets);
+void timingAdd(ConstExprStr measure, microseconds start, microseconds end,
+               std::unique_ptr<std::vector<std::pair<ConstExprStr, std::string>>> args,
+               std::unique_ptr<std::vector<std::pair<ConstExprStr, ConstExprStr>>> tags, FlowId self, FlowId previous,
+               std::unique_ptr<std::vector<int>> histogramBuckets);
 
-UnorderedMap<long, long> getAndClearHistogram(ConstExprStr histogram);
-std::string getCounterStatistics(std::vector<std::string> names);
+absl::flat_hash_map<long, long> getAndClearHistogram(ConstExprStr histogram);
+std::string getCounterStatistics();
 
 } // namespace sorbet
 #endif // SORBET_COUNTERS_H

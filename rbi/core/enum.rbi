@@ -4,8 +4,13 @@ class T::Enum
   extend T::Props::CustomType
 
   ## Enum class methods ##
+
+  # All the values defined in the Enum class
   sig {returns(T::Array[T.attached_class])}
   def self.values; end
+
+  sig {params(blk: T.nilable(T.proc.params(arg0: T.attached_class).void)).returns(T.any(T::Enumerator[T.attached_class], T::Array[T.attached_class]))}
+  def self.each_value(&blk); end
 
   # Convert from serialized value to enum instance.
   #
@@ -78,7 +83,7 @@ class T::Enum
 
 
   sig {params(serialized_val: T.untyped).void}
-  private def initialize(serialized_val=nil); end
+  def initialize(serialized_val=nil); end
 
   sig {params(const_name: Symbol).void}
   def _bind_name(const_name); end

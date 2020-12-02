@@ -3,7 +3,7 @@ begin
   class <emptyTree><<C <root>>> < (::<todo sym>)
     def self.<static-init><<static-init>$CENSORED>(<blk>)
       begin
-        <emptyTree>
+        ::<Magic>.<define-top-class-or-module>(::A)
         ::Sorbet::Private::Static.keep_for_ide(::A)
         <emptyTree>
       end
@@ -19,7 +19,7 @@ begin
     end
 
     def self.outer_static(<blk>)
-      <self>.private_class_method(::Sorbet::Private::Static.keep_self_def(<self>, :"inner_static"))
+      <self>.private_class_method(::Sorbet::Private::Static.keep_self_def(<self>, :inner_static))
     end
 
     def self.inner_static(<blk>)
@@ -27,7 +27,7 @@ begin
     end
 
     def outer_instance(<blk>)
-      <self>.class().private(::Sorbet::Private::Static.keep_def(<self>, :"inner_instance"))
+      <self>.class().private(::Sorbet::Private::Static.keep_def(<self>, :inner_instance))
     end
 
     def inner_instance(<blk>)
@@ -36,17 +36,17 @@ begin
 
     def self.<static-init>(<blk>)
       begin
-        <self>.sig() do ||
-          <self>.params({:"arg0" => ::Integer}).void()
+        ::Sorbet::Private::Static.sig(<self>) do ||
+          <self>.params(:arg0, ::Integer).void()
         end
-        <self>.sig() do ||
-          <self>.params({:"arg0" => ::Integer}).void()
+        ::Sorbet::Private::Static.sig(<self>) do ||
+          <self>.params(:arg0, ::Integer).void()
         end
         <self>.extend(::T::Sig)
-        ::Sorbet::Private::Static.keep_self_def(<self>, :"private")
-        ::Sorbet::Private::Static.keep_self_def(<self>, :"private_class_method")
-        <self>.private_class_method(::Sorbet::Private::Static.keep_self_def(<self>, :"outer_static"))
-        <self>.private(::Sorbet::Private::Static.keep_def(<self>, :"outer_instance"))
+        ::Sorbet::Private::Static.keep_self_def(<self>, :private)
+        ::Sorbet::Private::Static.keep_self_def(<self>, :private_class_method)
+        <self>.private_class_method(::Sorbet::Private::Static.keep_self_def(<self>, :outer_static))
+        <self>.private(::Sorbet::Private::Static.keep_def(<self>, :outer_instance))
         <emptyTree>
       end
     end

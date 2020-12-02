@@ -131,6 +131,8 @@ Suit::Diamonds.serialize # => 'DIAMONDS'
 Each serialized value must be unique compared to all other serialized values for
 this enum.
 
+## Converting from other types to enums
+
 Another common conversion is to take the serialized value and deserialize it
 back to the original enum value. This is also built into `T::Enum`:
 
@@ -204,8 +206,8 @@ This code is discouraged because it...
 
 Rather than thinking of enums as data containers, instead think of them as dumb
 immutable values. A more idiomatic way to express the code above looks similar
-to the example given in the section [Converting enums to other
-types](#converting-enums-to-other types) above:
+to the example given in the section
+[Converting enums to other types](#converting-enums-to-other-types) above:
 
 ```ruby
 # typed: strict

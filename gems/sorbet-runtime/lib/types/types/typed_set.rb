@@ -15,11 +15,16 @@ module T::Types
     end
 
     # @override Base
-    def valid?(obj)
+    def recursively_valid?(obj)
       obj.is_a?(Set) && super
     end
 
-    def new(*args) # rubocop:disable PrisonGuard/BanBuiltinMethodOverride
+    # @override Base
+    def valid?(obj)
+      obj.is_a?(Set)
+    end
+
+    def new(*args)
       Set.new(*T.unsafe(args))
     end
 

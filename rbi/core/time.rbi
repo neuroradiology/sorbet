@@ -219,7 +219,15 @@ class Time < Object
     )
     .returns(Time)
   end
-  def self.at(seconds, microseconds_with_frac=T.unsafe(nil)); end
+  sig do
+    params(
+        seconds: Numeric,
+        microseconds_with_frac: Numeric,
+        fractional_precision: Symbol
+    )
+    .returns(Time)
+  end
+  def self.at(seconds, microseconds_with_frac=T.unsafe(nil), fractional_precision=T.unsafe(nil)); end
 
   # Creates a [`Time`](https://docs.ruby-lang.org/en/2.6.0/Time.html) object
   # based on given values, interpreted as UTC (GMT). The year must be specified.
@@ -395,7 +403,7 @@ class Time < Object
   # ```
   sig do
     params(
-        other: Time,
+        other: Object,
     )
     .returns(T.nilable(Integer))
   end
@@ -603,7 +611,7 @@ class Time < Object
   # ```
   sig do
     params(
-        utc_offset: Integer,
+        utc_offset: T.any(Integer, String),
     )
     .returns(Time)
   end
@@ -683,17 +691,17 @@ class Time < Object
 
   sig do
     params(
-        year: T.any(Integer, String),
-        month: T.any(Integer, String),
-        day: T.any(Integer, String),
-        hour: T.any(Integer, String),
-        min: T.any(Integer, String),
-        sec: T.any(Numeric, String),
-        usec_with_frac: T.any(Numeric, String),
+      year: T.any(Integer, String),
+      month: T.any(Integer, String),
+      day: T.any(Integer, String),
+      hour: T.any(Integer, String),
+      min: T.any(Integer, String),
+      sec: T.any(Numeric, String),
+      tz: T.any(Numeric, String),
     )
     .void
   end
-  def initialize(year=T.unsafe(nil), month=T.unsafe(nil), day=T.unsafe(nil), hour=T.unsafe(nil), min=T.unsafe(nil), sec=T.unsafe(nil), usec_with_frac=T.unsafe(nil)); end
+  def initialize(year=T.unsafe(nil), month=T.unsafe(nil), day=T.unsafe(nil), hour=T.unsafe(nil), min=T.unsafe(nil), sec=T.unsafe(nil), tz=T.unsafe(nil)); end
 
   # Returns a string representing *time*. Equivalent to calling
   # [`strftime`](https://docs.ruby-lang.org/en/2.6.0/Time.html#method-i-strftime)

@@ -63,14 +63,14 @@ core::TypePtr extractArgType(core::Context ctx, cfg::Send &send, core::DispatchC
         return nullptr;
     }
     const auto &to = args[argId].type;
-    if (!to || !to->isFullyDefined()) {
+    if (!to || !to.isFullyDefined()) {
         return nullptr;
     }
     return to;
 }
 
-void extractSendArgumentKnowledge(core::Context ctx, core::Loc bindLoc, cfg::Send *snd,
-                                  const UnorderedMap<core::LocalVariable, InlinedVector<core::NameRef, 1>> &blockLocals,
+void extractSendArgumentKnowledge(core::Context ctx, core::LocOffsets bindLoc, cfg::Send *snd,
+                                  const UnorderedMap<cfg::LocalRef, InlinedVector<core::NameRef, 1>> &blockLocals,
                                   UnorderedMap<core::NameRef, core::TypePtr> &blockArgRequirements) {
     InlinedVector<unique_ptr<core::TypeAndOrigins>, 2> typeAndOriginsOwner;
     InlinedVector<const core::TypeAndOrigins *, 2> args;
@@ -84,12 +84,18 @@ void extractSendArgumentKnowledge(core::Context ctx, core::Loc bindLoc, cfg::Sen
     }
 
     core::CallLocs locs{
+        ctx.file,
         bindLoc,
         snd->receiverLoc,
         snd->argLocs,
     };
-    core::DispatchArgs dispatchArgs{snd->fun, locs, args, snd->recv.type, snd->recv.type, snd->link};
-    auto dispatchInfo = snd->recv.type->dispatchCall(ctx, dispatchArgs);
+    // Since this is a "fake" dispatch and we are not going to display the errors anyway,
+    // core::Loc::none() should be okay here.
+    auto originForUninitialized = core::Loc::none();
+    core::DispatchArgs dispatchArgs{snd->fun,       locs,           snd->numPosArgs,
+                                    args,           snd->recv.type, snd->recv.type,
+                                    snd->recv.type, snd->link,      originForUninitialized};
+    auto dispatchInfo = snd->recv.type.dispatchCall(ctx, dispatchArgs);
 
     int i = -1;
 
@@ -106,7 +112,7 @@ void extractSendArgumentKnowledge(core::Context ctx, core::Loc bindLoc, cfg::Sen
         while (iter != nullptr) {
             if (iter->main.method.exists() && iter->main.method != core::Symbols::untyped()) {
                 auto argType = extractArgType(ctx, *snd, iter->main, i);
-                if (argType && !argType->isUntyped()) {
+                if (argType && !argType.isUntyped()) {
                     if (!thisType) {
                         thisType = argType;
                     } else {
@@ -136,7 +142,7 @@ void extractSendArgumentKnowledge(core::Context ctx, core::Loc bindLoc, cfg::Sen
 UnorderedMap<core::NameRef, core::TypePtr> guessArgumentTypes(core::Context ctx, core::SymbolRef methodSymbol,
                                                               unique_ptr<cfg::CFG> &cfg) {
     // What variables by the end of basic block could plausibly contain what arguments.
-    vector<UnorderedMap<core::LocalVariable, InlinedVector<core::NameRef, 1>>> localsStoringArguments;
+    vector<UnorderedMap<cfg::LocalRef, InlinedVector<core::NameRef, 1>>> localsStoringArguments;
     localsStoringArguments.resize(cfg->maxBasicBlockId);
 
     // indicates what type should an argument have for basic block to execute
@@ -149,8 +155,7 @@ UnorderedMap<core::NameRef, core::TypePtr> guessArgumentTypes(core::Context ctx,
         if (bb == cfg->deadBlock()) {
             continue;
         }
-        UnorderedMap<core::LocalVariable, InlinedVector<core::NameRef, 1>> &blockLocals =
-            localsStoringArguments[bb->id];
+        UnorderedMap<cfg::LocalRef, InlinedVector<core::NameRef, 1>> &blockLocals = localsStoringArguments[bb->id];
         UnorderedMap<core::NameRef, core::TypePtr> &blockArgRequirements = argTypesForBBToPass[bb->id];
 
         for (auto bbparent : bb->backEdges) {
@@ -296,9 +301,6 @@ optional<core::AutocorrectSuggestion> SigSuggestion::maybeSuggestSig(core::Conte
     core::SymbolRef methodSymbol = cfg->symbol;
 
     bool guessedSomethingUseful = false;
-    if (ctx.state.suggestRuntimeProfiledType) {
-        guessedSomethingUseful = true;
-    }
 
     auto lspQueryMatches = ctx.state.lspQuery.matchesSuggestSig(methodSymbol);
     if (lspQueryMatches) {
@@ -314,11 +316,11 @@ optional<core::AutocorrectSuggestion> SigSuggestion::maybeSuggestSig(core::Conte
 
         guessedReturnType = core::Types::widen(ctx, core::Types::instantiate(ctx, methodReturnType, constr));
 
-        if (!guessedReturnType->isFullyDefined()) {
+        if (!guessedReturnType.isFullyDefined()) {
             guessedReturnType = core::Types::untypedUntracked();
         }
 
-        guessedSomethingUseful |= !guessedReturnType->isUntyped();
+        guessedSomethingUseful |= !guessedReturnType.isUntyped();
     } else {
         guessedReturnType = methodReturnType;
     }
@@ -344,12 +346,12 @@ optional<core::AutocorrectSuggestion> SigSuggestion::maybeSuggestSig(core::Conte
     fmt::memory_buffer ss;
     if (closestMethod.exists()) {
         auto closestReturnType = closestMethod.data(ctx)->resultType;
-        if (closestReturnType && !closestReturnType->isUntyped()) {
+        if (closestReturnType && !closestReturnType.isUntyped()) {
             guessedReturnType = closestReturnType;
         }
 
         for (const auto &arg : closestMethod.data(ctx)->arguments()) {
-            if (arg.type && !arg.type->isUntyped()) {
+            if (arg.type && !arg.type.isUntyped()) {
                 guessedArgumentTypes[arg.name] = arg.type;
             }
         }
@@ -399,8 +401,8 @@ optional<core::AutocorrectSuggestion> SigSuggestion::maybeSuggestSig(core::Conte
             core::TypePtr chosenType;
 
             auto oldType = argSym.type;
-            if (!oldType || oldType->isUntyped()) {
-                if (!argType || argType->isBottom()) {
+            if (!oldType || oldType.isUntyped()) {
+                if (!argType || argType.isBottom()) {
                     chosenType = core::Types::untypedUntracked();
                 } else {
                     guessedSomethingUseful = true;
@@ -410,11 +412,7 @@ optional<core::AutocorrectSuggestion> SigSuggestion::maybeSuggestSig(core::Conte
                 // TODO: maybe combine the old and new types in some way?
                 chosenType = oldType;
             }
-            if (!ctx.state.suggestRuntimeProfiledType || !chosenType->isUntyped()) {
-                fmt::format_to(ss, "{}: {}", argSym.argumentName(ctx), chosenType->show(ctx));
-            } else {
-                fmt::format_to(ss, "{}: ::T::Utils::RuntimeProfiled", argSym.argumentName(ctx));
-            }
+            fmt::format_to(ss, "{}: {}", argSym.argumentName(ctx), chosenType.show(ctx));
         }
         fmt::format_to(ss, ").");
     }
@@ -424,14 +422,12 @@ optional<core::AutocorrectSuggestion> SigSuggestion::maybeSuggestSig(core::Conte
 
     bool suggestsVoid = methodSymbol.data(ctx)->name == core::Names::initialize() ||
                         (core::Types::isSubType(ctx, core::Types::void_(), guessedReturnType) &&
-                         !guessedReturnType->isUntyped() && !guessedReturnType->isBottom());
+                         !guessedReturnType.isUntyped() && !guessedReturnType.isBottom());
 
-    if (ctx.state.suggestRuntimeProfiledType && guessedReturnType->isUntyped()) {
-        fmt::format_to(ss, "returns(::T::Utils::RuntimeProfiled)}}");
-    } else if (suggestsVoid) {
+    if (suggestsVoid) {
         fmt::format_to(ss, "void}}");
     } else {
-        fmt::format_to(ss, "returns({})}}", guessedReturnType->show(ctx));
+        fmt::format_to(ss, "returns({})}}", guessedReturnType.show(ctx));
     }
 
     auto [replacementLoc, padding] = loc.findStartOfLine(ctx);

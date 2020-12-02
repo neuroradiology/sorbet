@@ -102,18 +102,6 @@ class Range < Object
   extend T::Generic
   Elem = type_member(:out)
 
-  # Constructs a range using the given `begin` and `end`. If the `exclude_end`
-  # parameter is omitted or is `false`, the range will include the end object;
-  # otherwise, it will be excluded.
-  sig do
-    type_parameters(:U).params(
-      from: T.type_parameter(:U),
-      to: T.nilable(T.type_parameter(:U)),
-      exclude_end: T::Boolean
-    ).returns(T::Range[T.type_parameter(:U)])
-  end
-  def self.new(from, to, exclude_end=false); end
-
   # Returns `true` only if `obj` is a
   # [`Range`](https://docs.ruby-lang.org/en/2.6.0/Range.html), has equivalent
   # begin and end items (by comparing them with `==`), and has the same
@@ -216,10 +204,8 @@ class Range < Object
   # either true/false, or always return a number. It is undefined which value is
   # actually picked up at each iteration.
   sig do
-    type_parameters(:U).params(
-        blk: T.proc.params(arg0: Elem).returns(T::Boolean),
-    )
-    .returns(T.nilable(T.type_parameter(:U)))
+    params(blk: T.proc.params(arg0: Elem).returns(T.any(Numeric, T::Boolean)))
+      .returns(T.nilable(Elem))
   end
   def bsearch(&blk); end
 
@@ -344,9 +330,17 @@ class Range < Object
 
   sig do
     params(
-        _begin: Elem,
-        _end: Elem,
-        exclude_end: T::Boolean,
+      _begin: Elem,
+      _end: T.nilable(Elem),
+      exclude_end: T::Boolean
+    )
+    .void
+  end
+  sig do
+    params(
+      _begin: T.nilable(Elem),
+      _end: Elem,
+      exclude_end: T::Boolean
     )
     .void
   end

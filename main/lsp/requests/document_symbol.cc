@@ -1,5 +1,6 @@
 #include "main/lsp/requests/document_symbol.h"
 #include "core/lsp/QueryResponse.h"
+#include "main/lsp/json_types.h"
 #include "main/lsp/lsp.h"
 
 using namespace std;
@@ -50,12 +51,12 @@ std::unique_ptr<DocumentSymbol> symbolRef2DocumentSymbol(const core::GlobalState
         prefix = "self.";
     }
     auto result = make_unique<DocumentSymbol>(prefix + sym->name.show(gs), kind, move(range), move(selectionRange));
-    if (sym->isMethod()) {
-        result->detail = prettyTypeForMethod(gs, symRef, nullptr, nullptr, nullptr);
-    } else {
-        // Currently released version of VSCode has a bug that requires this non-optional field to be present
-        result->detail = "";
-    }
+
+    // Previous versions of VSCode have a bug that requires this non-optional field to be present.
+    // This previously tried to include the method signature but due to issues where large signatures were not readable
+    // when put on one line and given that currently details are only visible in the outline view but not seen in the
+    // symbol search. Additionally, no other language server implementations we could find used this field.
+    result->detail = "";
 
     vector<unique_ptr<DocumentSymbol>> children;
     symbolRef2DocumentSymbolWalkMembers(gs, symRef, filter, children);
@@ -90,17 +91,26 @@ unique_ptr<ResponseMessage> DocumentSymbolTask::runRequest(LSPTypecheckerDelegat
     vector<unique_ptr<DocumentSymbol>> result;
     string_view uri = params->textDocument->uri;
     auto fref = config.uri2FileRef(gs, uri);
-    for (u4 idx = 1; idx < gs.symbolsUsed(); idx++) {
-        core::SymbolRef ref(gs, idx);
-        if (!hideSymbol(gs, ref) &&
-            // a bit counter-intuitive, but this actually should be `!= fref`, as it prevents duplicates.
-            (ref.data(gs)->owner.data(gs)->loc().file() != fref || ref.data(gs)->owner == core::Symbols::root())) {
-            for (auto definitionLocation : ref.data(gs)->locs()) {
-                if (definitionLocation.file() == fref) {
-                    auto data = symbolRef2DocumentSymbol(gs, ref, fref);
-                    if (data) {
-                        result.push_back(move(data));
-                        break;
+    vector<pair<core::SymbolRef::Kind, u4>> symbolTypes = {
+        {core::SymbolRef::Kind::ClassOrModule, gs.classAndModulesUsed()},
+        {core::SymbolRef::Kind::Method, gs.methodsUsed()},
+        {core::SymbolRef::Kind::Field, gs.fieldsUsed()},
+        {core::SymbolRef::Kind::TypeArgument, gs.typeArgumentsUsed()},
+        {core::SymbolRef::Kind::TypeMember, gs.typeMembersUsed()},
+    };
+    for (auto [kind, used] : symbolTypes) {
+        for (u4 idx = 0; idx < used; idx++) {
+            core::SymbolRef ref(gs, kind, idx);
+            if (!hideSymbol(gs, ref) &&
+                // a bit counter-intuitive, but this actually should be `!= fref`, as it prevents duplicates.
+                (ref.data(gs)->owner.data(gs)->loc().file() != fref || ref.data(gs)->owner == core::Symbols::root())) {
+                for (auto definitionLocation : ref.data(gs)->locs()) {
+                    if (definitionLocation.file() == fref) {
+                        auto data = symbolRef2DocumentSymbol(gs, ref, fref);
+                        if (data) {
+                            result.push_back(move(data));
+                            break;
+                        }
                     }
                 }
             }

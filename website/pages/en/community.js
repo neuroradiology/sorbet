@@ -142,6 +142,12 @@ class Index extends React.Component {
                     'A tool to generate RBIs from YARD documentation',
                 },
                 {
+                  title: 'yard-sorbet',
+                  link: 'https://github.com/dduugg/yard-sorbet',
+                  description:
+                    'A YARD plugin to parse Sorbet signatures when generating docs',
+                },
+                {
                   title: 'sorbet-progress',
                   link: 'https://github.com/jaredbeck/sorbet-progress',
                   description:
@@ -155,7 +161,17 @@ class Index extends React.Component {
                 {
                   title: 'rubocop-sorbet',
                   link: 'https://github.com/Shopify/rubocop-sorbet',
-                  description: 'A collection of Rubocop rules for Sorbet.',
+                  description: 'A collection of Rubocop rules for Sorbet',
+                },
+                {
+                  title: 'pronto-sorbet',
+                  link: 'https://github.com/teamsimplepay/pronto-sorbet',
+                  description: 'Run Sorbet as a Pronto runner',
+                },
+                {
+                  title: 'spoom',
+                  link: 'https://github.com/Shopify/spoom',
+                  description: 'Useful tools for Sorbet enthusiasts',
                 },
               ]}
             />

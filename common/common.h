@@ -11,17 +11,12 @@ static_assert(false, "Need c++14 to compile this codebase");
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "sorbet_version/sorbet_version.h"
 #include "spdlog/spdlog.h"
 #include <stdint.h>
 #include <string>
 #include <string_view>
 #include <type_traits>
-
-#if !defined(NDEBUG)
-// So you can use `cout` when debugging. Not included in production as it is a
-// performance hit.
-#include <iostream>
-#endif
 
 namespace sorbet {
 
@@ -31,41 +26,56 @@ template <class E> using UnorderedSet = absl::flat_hash_set<E>;
 // Uncomment to make vectors debuggable
 // template <class T, size_t N> using InlinedVector = std::vector<T>;
 
-#if defined(NDEBUG) && !defined(FORCE_DEBUG)
-constexpr bool debug_mode = false;
-#undef DEBUG_MODE
-#else
-#define DEBUG_MODE
-constexpr bool debug_mode = true;
-#endif
-
-#if !defined(EMSCRIPTEN)
-constexpr bool emscripten_build = false;
-#else
-constexpr bool emscripten_build = true;
-#endif
-
-#if !defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
-constexpr bool fuzz_mode = false;
-#else
-constexpr bool fuzz_mode = true;
-#endif
+// Wraps input in double quotes. https://stackoverflow.com/a/6671729
+#define Q(x) #x
+#define QUOTED(x) Q(x)
 
 #define _MAYBE_ADD_COMMA(...) , ##__VA_ARGS__
+
+// A faster version of ENFORCE that does not emit a timer. Useful for checks that happen extremely frequently and
+// are O(1). Please avoid using unless ENFORCE shows up in profiles.
+#define ENFORCE_NO_TIMER(x, ...)                                                                            \
+    do {                                                                                                    \
+        if (::sorbet::debug_mode) {                                                                         \
+            if (!(x)) {                                                                                     \
+                ::sorbet::Exception::failInFuzzer();                                                        \
+                if (stopInDebugger()) {                                                                     \
+                    (void)!(x);                                                                             \
+                }                                                                                           \
+                ::sorbet::Exception::enforce_handler(#x, __FILE__, __LINE__ _MAYBE_ADD_COMMA(__VA_ARGS__)); \
+            }                                                                                               \
+        }                                                                                                   \
+    } while (false);
 
 // Used for cases like https://xkcd.com/2200/
 // where there is some assumption that you believe should always hold.
 // Please use this to explicitly write down what assumptions was the code written under.
 // One day they might be violated and you'll help the next person debug the issue.
-#define ENFORCE(x, ...)                                                                             \
-    ((::sorbet::debug_mode && !(x)) ? ({                                                            \
-        ::sorbet::Exception::failInFuzzer();                                                        \
-        if (stopInDebugger()) {                                                                     \
-            (void)!(x);                                                                             \
-        }                                                                                           \
-        ::sorbet::Exception::enforce_handler(#x, __FILE__, __LINE__ _MAYBE_ADD_COMMA(__VA_ARGS__)); \
-    })                                                                                              \
-                                    : false)
+// Emits a timer so that expensive checks show up in traces in debug builds.
+#define ENFORCE(...)                                                                                              \
+    do {                                                                                                          \
+        if (::sorbet::debug_mode) {                                                                               \
+            auto __enforceTimer =                                                                                 \
+                ::sorbet::Timer(*(::spdlog::default_logger_raw()), "ENFORCE(" __FILE__ ":" QUOTED(__LINE__) ")"); \
+            ENFORCE_NO_TIMER(__VA_ARGS__);                                                                        \
+        }                                                                                                         \
+    } while (false);
+
+#ifdef SKIP_SLOW_ENFORCE
+constexpr bool skip_slow_enforce = true;
+#else
+constexpr bool skip_slow_enforce = false;
+#endif
+
+// Some ENFORCEs are super slow and/or don't pass on Stripe's codebase.
+// Long term we should definitely make these checks pass and maybe even make them fast,
+// but for now we provide a way to skip slow debug checks (for example, when compiling debug release builds)
+#define SLOW_ENFORCE(...)                   \
+    do {                                    \
+        if (!::sorbet::skip_slow_enforce) { \
+            ENFORCE(__VA_ARGS__);           \
+        }                                   \
+    } while (false);
 
 #define DEBUG_ONLY(X) \
     if (debug_mode) { \
@@ -165,4 +175,5 @@ std::string demangle(const char *mangled);
 #pragma GCC poison rexec rexec_af
 
 #include "Exception.h"
+#include "Timer.h"
 #endif

@@ -36,18 +36,480 @@ class Opus::Types::Test::EdgeCasesTest < Critic::Unit::UnitTest
     assert_equal("foo", klass.new.bar = "foo")
   end
 
-  it 'handles aliased methods' do
-    klass = Class.new do
+  it 'handles module_function on including class' do
+    mod = Module.new do
       extend T::Sig
       extend T::Helpers
-      sig {returns(Symbol)}
-      def foo
-        :foo
+      sig { params(foo: String).returns(String) }
+      module_function def foo(foo)
+        foo
       end
-      alias_method :bar, :foo
     end
-    assert_equal(:foo, klass.new.foo)
-    assert_equal(:foo, klass.new.bar)
+
+    klass = Class.new do
+      include mod
+    end
+
+    assert_equal('bar', klass.new.send(:foo, 'bar'))
+    assert_equal('bar', mod.foo('bar'))
+  end
+
+  private def counting_allocations
+    before = GC.stat[:total_allocated_objects]
+    yield
+    GC.stat[:total_allocated_objects] - before - 1 # Subtract one for the allocation by GC.stat itself
+  end
+
+  describe 'aliasing' do
+    describe 'instance method' do
+      it 'handles alias_method with runtime checking' do
+        klass = Class.new do
+          extend T::Sig
+          extend T::Helpers
+          sig {params(x: Symbol).returns(Symbol)}
+          def foo(x=:foo)
+            x
+          end
+          alias_method :bar, :foo
+        end
+        assert_equal(:foo, klass.new.foo)
+        assert_equal(:foo, klass.new.bar)
+
+        # Should still validate
+        assert_raises(TypeError) do
+          klass.new.bar(1)
+        end
+
+        # Should use fast path
+        obj = klass.new
+        allocs = counting_allocations {obj.bar}
+        assert(allocs < 5)
+      end
+
+      it 'handles alias_method without runtime checking' do
+        klass = Class.new do
+          extend T::Sig
+          extend T::Helpers
+          sig {params(x: Symbol).returns(Symbol).checked(:never)}
+          def foo(x=:foo)
+            x
+          end
+          alias_method :bar, :foo
+        end
+        assert_equal(:foo, klass.new.foo)
+        assert_equal(:foo, klass.new.bar)
+
+        # Shouldn't add overhead
+        obj = klass.new
+        allocs = counting_allocations {obj.bar}
+        assert_equal(0, allocs)
+      end
+
+      it 'handles alias with runtime checking' do
+        klass = Class.new do
+          extend T::Sig
+          extend T::Helpers
+          sig {params(x: Symbol).returns(Symbol)}
+          def foo(x=:foo)
+            x
+          end
+          alias :bar :foo
+        end
+        assert_equal(:foo, klass.new.foo)
+        assert_equal(:foo, klass.new.bar)
+
+        # Should still validate
+        assert_raises(TypeError) do
+          klass.new.bar(1)
+        end
+
+        # Should use fast path
+        obj = klass.new
+        allocs = counting_allocations {obj.bar}
+        assert(allocs < 5)
+      end
+
+      it 'handles alias without runtime checking' do
+        klass = Class.new do
+          extend T::Sig
+          extend T::Helpers
+          sig {params(x: Symbol).returns(Symbol).checked(:never)}
+          def foo(x=:foo)
+            x
+          end
+          alias :bar :foo
+        end
+        assert_equal(:foo, klass.new.foo)
+        assert_equal(:foo, klass.new.bar)
+
+        # Shouldn't add overhead
+        obj = klass.new
+        allocs = counting_allocations {obj.bar}
+        assert_equal(0, allocs)
+      end
+
+      it 'handles alias to superclass method with runtime checking' do
+        superclass = Class.new do
+          extend T::Sig
+
+          sig {params(x: Symbol).returns(Symbol)}
+          def foo(x=:foo)
+            x
+          end
+        end
+
+        subclass = Class.new(superclass) do
+          alias_method :bar, :foo
+        end
+
+        assert_equal(:foo, subclass.new.foo)
+        assert_equal(:foo, subclass.new.bar)
+        assert_equal(:foo, superclass.new.foo)
+
+        # Should still validate
+        assert_raises(TypeError) do
+          subclass.new.bar(1)
+        end
+
+        # Should use fast path
+        obj = subclass.new
+        allocs = counting_allocations {obj.bar}
+        assert(allocs < 5)
+      end
+
+      it 'handles alias to superclass method without runtime checking' do
+        superclass = Class.new do
+          extend T::Sig
+
+          sig {params(x: Symbol).returns(Symbol).checked(:never)}
+          def foo(x=:foo)
+            x
+          end
+        end
+
+        subclass = Class.new(superclass) do
+          alias_method :bar, :foo
+        end
+
+        assert_equal(:foo, subclass.new.foo)
+        assert_equal(:foo, subclass.new.bar)
+        assert_equal(:foo, superclass.new.foo)
+
+        # Shouldn't add overhead
+        obj = subclass.new
+        allocs = counting_allocations {obj.bar}
+        assert_equal(0, allocs)
+      end
+
+      it 'handles alias_method to included method with runtime checking' do
+        mod = Module.new do
+          extend T::Sig
+
+          sig {params(x: Symbol).returns(Symbol)}
+          def foo(x=:foo)
+            x
+          end
+        end
+
+        klass = Class.new do
+          include mod
+          alias_method :bar, :foo
+        end
+
+        assert_equal(:foo, klass.new.foo)
+        assert_equal(:foo, klass.new.bar)
+
+        # Should still validate
+        assert_raises(TypeError) do
+          klass.new.bar(1)
+        end
+
+        # Should use fast path
+        obj = klass.new
+        allocs = counting_allocations {obj.bar}
+        assert(allocs < 5)
+      end
+
+      it 'handles alias_method to included method without runtime checking' do
+        mod = Module.new do
+          extend T::Sig
+
+          sig {params(x: Symbol).returns(Symbol).checked(:never)}
+          def foo(x=:foo)
+            x
+          end
+        end
+
+        klass = Class.new do
+          include mod
+          alias_method :bar, :foo
+        end
+
+        assert_equal(:foo, klass.new.foo)
+        assert_equal(:foo, klass.new.bar)
+
+        # Shouldn't add overhead
+        obj = klass.new
+        allocs = counting_allocations {obj.bar}
+        assert_equal(0, allocs)
+      end
+    end
+
+    describe 'singleton method' do
+      it 'handles alias_method with runtime checking' do
+        klass = Class.new do
+          extend T::Sig
+          extend T::Helpers
+          sig {params(x: Symbol).returns(Symbol)}
+          def self.foo(x=:foo)
+            x
+          end
+          class << self
+            alias_method :bar, :foo
+          end
+        end
+        assert_equal(:foo, klass.bar)
+        assert_equal(:foo, klass.foo)
+
+        # Should still validate
+        assert_raises(TypeError) do
+          klass.bar(1)
+        end
+
+        # Should use fast path
+        allocs = counting_allocations {klass.bar}
+        assert(allocs < 5)
+      end
+
+      it 'handles alias_method without runtime checking' do
+        klass = Class.new do
+          extend T::Sig
+          extend T::Helpers
+          sig {returns(Symbol).checked(:never)}
+          def self.foo
+            :foo
+          end
+          class << self
+            alias_method :bar, :foo
+          end
+        end
+        assert_equal(:foo, klass.bar)
+        assert_equal(:foo, klass.foo)
+
+        # Shouldn't add overhead
+        klass.bar # Need extra call since first one came before `foo` unwrap
+        allocs = counting_allocations {klass.bar}
+        assert_equal(0, allocs)
+      end
+
+      it 'handles alias with runtime checking' do
+        klass = Class.new do
+          extend T::Sig
+          extend T::Helpers
+          sig {params(x: Symbol).returns(Symbol)}
+          def self.foo(x=:foo)
+            x
+          end
+          class << self
+            alias :bar :foo
+          end
+        end
+        assert_equal(:foo, klass.bar)
+        assert_equal(:foo, klass.foo)
+
+        # Should still validate
+        assert_raises(TypeError) do
+          klass.bar(1)
+        end
+
+        # Should use fast path
+        allocs = counting_allocations {klass.bar}
+        assert(allocs < 5)
+      end
+
+      it 'handles alias without runtime checking' do
+        klass = Class.new do
+          extend T::Sig
+          extend T::Helpers
+          sig {returns(Symbol).checked(:never)}
+          def self.foo
+            :foo
+          end
+          class << self
+            alias :bar :foo
+          end
+        end
+        assert_equal(:foo, klass.bar)
+        assert_equal(:foo, klass.foo)
+
+        # Shouldn't add overhead
+        klass.bar # Need extra call since first one came before `foo` unwrap
+        allocs = counting_allocations {klass.bar}
+        assert_equal(0, allocs)
+      end
+
+      it 'handles alias_method to superclass method with runtime checking' do
+        superclass = Class.new do
+          extend T::Sig
+
+          sig {params(x: Symbol).returns(Symbol)}
+          def self.foo(x=:foo)
+            x
+          end
+        end
+
+        subclass = Class.new(superclass) do
+          class << self
+            alias_method :bar, :foo
+          end
+        end
+
+        assert_equal(:foo, subclass.foo)
+        assert_equal(:foo, subclass.bar)
+        assert_equal(:foo, superclass.foo)
+
+        # Should still validate
+        assert_raises(TypeError) do
+          subclass.bar(1)
+        end
+
+        # Should use fast path
+        allocs = counting_allocations {subclass.bar}
+        assert(allocs < 5)
+      end
+
+      it 'handles alias_method to superclass method without runtime checking' do
+        superclass = Class.new do
+          extend T::Sig
+
+          sig {params(x: Symbol).returns(Symbol).checked(:never)}
+          def self.foo(x=:foo)
+            x
+          end
+        end
+
+        subclass = Class.new(superclass) do
+          class << self
+            alias_method :bar, :foo
+          end
+        end
+
+        assert_equal(:foo, subclass.foo)
+        assert_equal(:foo, subclass.bar)
+        assert_equal(:foo, superclass.foo)
+
+        # Shouldn't add overhead
+        allocs = counting_allocations {subclass.bar}
+        assert_equal(0, allocs)
+      end
+
+      it 'handles alias_method to extended method with runtime checking' do
+        mod = Module.new do
+          extend T::Sig
+
+          sig {params(x: Symbol).returns(Symbol)}
+          def foo(x=:foo)
+            x
+          end
+        end
+
+        klass = Class.new do
+          extend mod
+
+          class << self
+            alias_method :bar, :foo
+          end
+        end
+
+        assert_equal(:foo, klass.foo)
+        assert_equal(:foo, klass.bar)
+
+        # Should still validate
+        assert_raises(TypeError) do
+          klass.bar(1)
+        end
+
+        # Should use fast path
+        allocs = counting_allocations {klass.bar}
+        assert(allocs < 5)
+      end
+
+      it 'handles alias_method to extended method without runtime checking' do
+        mod = Module.new do
+          extend T::Sig
+
+          sig {params(x: Symbol).returns(Symbol).checked(:never)}
+          def foo(x=:foo)
+            x
+          end
+        end
+
+        klass = Class.new do
+          extend mod
+
+          class << self
+            alias_method :bar, :foo
+          end
+        end
+
+        assert_equal(:foo, klass.foo)
+        assert_equal(:foo, klass.bar)
+
+        # Shouldn't add overhead
+        allocs = counting_allocations {klass.bar}
+        assert_equal(0, allocs)
+      end
+
+      it 'handles method reference without sig' do
+        klass = Class.new do
+          extend T::Sig
+          extend T::Helpers
+          def self.foo(arr)
+            arr.map(&method(:bar))
+          end
+          def self.bar(x)
+            -x
+          end
+        end
+        assert_equal([1, 2, 3], klass.foo([-1, -2, -3]))
+      end
+
+      it 'handles method reference with runtime checking' do
+        klass = Class.new do
+          extend T::Sig
+          extend T::Helpers
+          def self.foo(arr)
+            arr.map(&method(:bar))
+          end
+
+          sig { params(x: Integer).returns(Integer) }
+          def self.bar(x)
+            -x
+          end
+        end
+        assert_equal([1, 2, 3], klass.foo([-1, -2, -3]))
+        assert_raises(TypeError) do
+          klass.foo(["-1", "-2", "-3"])
+        end
+      end
+
+      it 'handles method reference without runtime checking' do
+        klass = Class.new do
+          extend T::Sig
+          extend T::Helpers
+          def self.foo(arr)
+            arr.map(&method(:bar))
+          end
+
+          sig { params(x: Integer).returns(Integer).checked(:never) }
+          def self.bar(x)
+            -x
+          end
+        end
+        assert_equal([1, 2, 3], klass.foo([-1, -2, -3]))
+        assert_equal(["-1", "-2", "-3"], klass.foo(["-1", "-2", "-3"]))
+      end
+    end
   end
 
   it 'works for any_instance' do
@@ -222,6 +684,7 @@ class Opus::Types::Test::EdgeCasesTest < Critic::Unit::UnitTest
     klass = Class.new do
       class << self
         def singleton_method_added(name)
+          super
           @called ||= []
           @called << name
         end
@@ -235,9 +698,9 @@ class Opus::Types::Test::EdgeCasesTest < Critic::Unit::UnitTest
     end
 
     assert_equal(
-      [
-        :singleton_method_added,
-        :post_hook,
+      %i[
+        singleton_method_added
+        post_hook
       ],
       klass.instance_variable_get(:@called)
     )

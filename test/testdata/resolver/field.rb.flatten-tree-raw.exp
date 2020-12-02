@@ -6,7 +6,7 @@ InsSeq{
       name = EmptyTree<<C <U <root>>>>
       ancestors = [ConstantLit{
           orig = nullptr
-          symbol = ::<todo sym>
+          symbol = (class ::<todo sym>)
         }]
       rhs = [
         MethodDef{
@@ -37,15 +37,16 @@ InsSeq{
           rhs = Send{
             recv = ConstantLit{
               orig = nullptr
-              symbol = ::Sorbet::Private::Static
+              symbol = (module ::Sorbet::Private::Static)
             }
             fun = <U keep_def>
             block = nullptr
+            pos_args = 2
             args = [
               Local{
                 localVariable = <U <self>>
               }
-              Literal{ value = :"foo" }
+              Literal{ value = :foo }
             ]
           }
         }

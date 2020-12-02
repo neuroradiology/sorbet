@@ -164,8 +164,6 @@ module T::Utils
   def self.register_forwarder(from_method, to_method, remove_first_param: nil); end
 end
 
-class T::Utils::RuntimeProfiled
-end
 
 module T::AbstractUtils
   def self.abstract_method?(method); end
@@ -182,4 +180,10 @@ module T::Utils::Nilable
   def self.get_type_info(prop_type); end
   def self.get_underlying_type(prop_type); end
   def self.get_underlying_type_object(prop_type); end
+end
+
+module T::NonForcingConstants
+  # See <https://sorbet.org/docs/non-forcing-constants> for full docs.
+  sig {params(val: BasicObject, klass: String, package: T.nilable(String)).returns(T::Boolean)}
+  def self.non_forcing_is_a?(val, klass, package: nil); end
 end

@@ -12,7 +12,11 @@ module T::Types
 
     # @override Base
     def name
-      @raw_type.name
+      # Memoize to mitigate pathological performance with anonymous modules (https://bugs.ruby-lang.org/issues/11119)
+      #
+      # `name` isn't normally a hot path for types, but it is used in initializing a T::Types::Union,
+      # and so in `T.nilable`, and so in runtime constructions like `x = T.let(nil, T.nilable(Integer))`.
+      @name ||= @raw_type.name.freeze
     end
 
     # @override Base
@@ -27,6 +31,23 @@ module T::Types
         @raw_type <= other.raw_type
       else
         false
+      end
+    end
+
+    def to_nilable
+      @nilable ||= T::Types::Union.new([self, T::Utils::Nilable::NIL_TYPE])
+    end
+
+    module Private
+      module Pool
+        def self.type_for_module(mod)
+          cached = mod.instance_variable_get(:@__as_sorbet_simple_type)
+          return cached if cached
+
+          type = Simple.new(mod)
+          mod.instance_variable_set(:@__as_sorbet_simple_type, type) unless mod.frozen?
+          type
+        end
       end
     end
   end

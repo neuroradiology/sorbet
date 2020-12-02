@@ -2,41 +2,28 @@
 #define RUBY_TYPER_LSP_LSPTYPECHECKER_H
 
 #include "ast/ast.h"
-#include "common/concurrency/WorkerPool.h"
-#include "common/kvstore/KeyValueStore.h"
-#include "core/ErrorQueue.h"
-#include "core/NameHash.h"
+#include "core/ErrorFlusher.h"
 #include "core/core.h"
+#include "main/lsp/ErrorReporter.h"
 #include "main/lsp/LSPConfiguration.h"
+#include "main/lsp/LSPFileUpdates.h"
+
+namespace sorbet {
+class WorkerPool;
+} // namespace sorbet
 
 namespace sorbet::core::lsp {
 class PreemptionTaskManager;
-}
+class QueryResponse;
+} // namespace sorbet::core::lsp
 
 namespace sorbet::realmain::lsp {
+class ResponseError;
 
 struct LSPQueryResult {
     std::vector<std::unique_ptr<core::lsp::QueryResponse>> responses;
     // (Optional) Error that occurred during the query that you can pass on to the client.
-    std::unique_ptr<ResponseError> error = nullptr;
-};
-
-class TypecheckRun final {
-public:
-    // Errors encountered during typechecking.
-    std::vector<std::unique_ptr<core::Error>> errors;
-    // The set of files that were typechecked for errors.
-    std::vector<core::FileRef> filesTypechecked;
-    // The edit applied to `gs`.
-    LSPFileUpdates updates;
-    // Specifies if the typecheck run took the fast or slow path.
-    bool tookFastPath = false;
-    // If update took the slow path, contains a new global state that should be used moving forward.
-    std::optional<std::unique_ptr<core::GlobalState>> newGS;
-
-    TypecheckRun(std::vector<std::unique_ptr<core::Error>> errors = {},
-                 std::vector<core::FileRef> filesTypechecked = {}, LSPFileUpdates updates = {},
-                 bool tookFastPath = false, std::optional<std::unique_ptr<core::GlobalState>> newGS = std::nullopt);
+    std::unique_ptr<ResponseError> error;
 };
 
 class UndoState;
@@ -54,14 +41,6 @@ class LSPTypechecker final {
     std::vector<ast::ParsedFile> indexed;
     /** Trees that have been indexed (with finalGS) and can be reused between different runs */
     UnorderedMap<int, ast::ParsedFile> indexedFinalGS;
-    /** Hashes of global states obtained by resolving every file in isolation. Used for fastpath. */
-    std::vector<core::FileHash> globalStateHashes;
-    /** Stores the epoch in which we last sent diagnostics to the client for each file. Should be the same length as
-     * globalStateHashes. */
-    std::vector<u4> diagnosticEpochs;
-    /** List of files that have had errors in last run*/
-    std::vector<core::FileRef> filesThatHaveErrors;
-    std::unique_ptr<KeyValueStore> kvstore; // always null for now.
     /** Set only when typechecking is happening on the slow path. Contains all of the state needed to restore
      * LSPTypechecker to its pre-slow-path state. Can be null, which indicates that no slow path is currently running */
     std::unique_ptr<UndoState> cancellationUndoState;
@@ -72,27 +51,18 @@ class LSPTypechecker final {
     /** Used for assertions. Indicates if `initialize` has been run. */
     bool initialized = false;
 
+    std::shared_ptr<ErrorReporter> errorReporter;
+
     /** Conservatively reruns entire pipeline without caching any trees. Returns 'true' if committed, 'false' if
      * canceled. */
     bool runSlowPath(LSPFileUpdates updates, WorkerPool &workers, bool cancelable);
 
-    /** Runs incremental typechecking on the provided updates. */
-    TypecheckRun runFastPath(LSPFileUpdates updates, WorkerPool &workers) const;
-
-    /**
-     * Sends diagnostics from a typecheck run to the client.
-     * `epoch` specifies the epoch of the file updates that produced these diagnostics. Used to prevent emitting
-     * outdated diagnostics from a slow path run if they had already been re-typechecked on the fast path.
-     */
-    void pushDiagnostics(u4 epoch, std::vector<core::FileRef> filesTypechecked,
-                         std::vector<std::unique_ptr<core::Error>> errors);
+    /** Runs incremental typechecking on the provided updates. Returns the final list of files typechecked. */
+    std::vector<core::FileRef> runFastPath(LSPFileUpdates &updates, WorkerPool &workers,
+                                           std::shared_ptr<core::ErrorFlusher> errorFlusher) const;
 
     /** Commits the given file updates to LSPTypechecker. Does not send diagnostics. */
     void commitFileUpdates(LSPFileUpdates &updates, bool couldBeCanceled);
-
-    /** Officially 'commits' the output of a `TypecheckRun` by updating the relevant state on LSPTypechecker and sending
-     * diagnostics to the editor. */
-    void commitTypecheckRun(TypecheckRun run);
 
     /**
      * Get an LSPFileUpdates containing the latest versions of the given files. It's a "no-op" file update because it
@@ -100,13 +70,17 @@ class LSPTypechecker final {
      */
     LSPFileUpdates getNoopUpdate(std::vector<core::FileRef> frefs) const;
 
+    /** Deep copy all entries in `indexed` that contain ASTs, except for those with IDs in the ignore set. Returns true
+     * on success, false if the operation was canceled. */
+    bool copyIndexed(WorkerPool &workers, const UnorderedSet<int> &ignore, std::vector<ast::ParsedFile> &out) const;
+
 public:
     LSPTypechecker(std::shared_ptr<const LSPConfiguration> config,
                    std::shared_ptr<core::lsp::PreemptionTaskManager> preemptionTaskManager);
     ~LSPTypechecker();
 
     /**
-     * Conducts the first typechecking pass of the session, and initializes `gs`, `index`, and `globalStateHashes`
+     * Conducts the first typechecking pass of the session, and initializes `gs` and `index`
      * variables. Must be called before typecheck and other functions work.
      *
      * Writes all diagnostic messages to LSPOutput.
@@ -117,12 +91,13 @@ public:
      * Typechecks the given input. Returns 'true' if the updates were committed, or 'false' if typechecking was
      * canceled. Distributes work across the given worker pool.
      */
-    bool typecheck(LSPFileUpdates updates, WorkerPool &workers);
+    bool typecheck(LSPFileUpdates updates, WorkerPool &workers,
+                   std::vector<std::unique_ptr<Timer>> diagnosticLatencyTimers);
 
     /**
      * Re-typechecks the provided files to re-produce error messages.
      */
-    TypecheckRun retypecheck(std::vector<core::FileRef> frefs, WorkerPool &workers) const;
+    std::vector<std::unique_ptr<core::Error>> retypecheck(std::vector<core::FileRef> frefs, WorkerPool &workers) const;
 
     /** Runs the provided query against the given files, and returns matches. */
     LSPQueryResult query(const core::lsp::Query &q, const std::vector<core::FileRef> &filesForQuery,
@@ -137,11 +112,6 @@ public:
      * Returns the parsed files for the given files, including resolver.
      */
     std::vector<ast::ParsedFile> getResolved(const std::vector<core::FileRef> &frefs) const;
-
-    /**
-     * Returns the hashes of all committed files.
-     */
-    const std::vector<core::FileHash> &getFileHashes() const;
 
     /**
      * Returns the currently active GlobalState.
@@ -184,12 +154,12 @@ public:
     /**
      * Typechecks the given input on the fast path. The edit *must* be a fast path edit!
      */
-    void typecheckOnFastPath(LSPFileUpdates updates);
+    void typecheckOnFastPath(LSPFileUpdates updates, std::vector<std::unique_ptr<Timer>> diagnosticLatencyTimers);
 
     /**
      * Re-typechecks the provided files to re-produce error messages.
      */
-    TypecheckRun retypecheck(std::vector<core::FileRef> frefs) const;
+    std::vector<std::unique_ptr<core::Error>> retypecheck(std::vector<core::FileRef> frefs) const;
 
     /** Runs the provided query against the given files, and returns matches. */
     LSPQueryResult query(const core::lsp::Query &q, const std::vector<core::FileRef> &filesForQuery) const;
@@ -205,15 +175,9 @@ public:
     std::vector<ast::ParsedFile> getResolved(const std::vector<core::FileRef> &frefs) const;
 
     /**
-     * Returns the hashes of all committed files.
-     */
-    const std::vector<core::FileHash> &getFileHashes() const;
-
-    /**
      * Returns the currently active GlobalState.
      */
     const core::GlobalState &state() const;
 };
-
 } // namespace sorbet::realmain::lsp
 #endif
